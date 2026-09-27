@@ -1,0 +1,38 @@
+# Contributing
+
+Mac Storage Advisor is local-first and non-destructive. Changes that weaken those rules need an ADR update, not a quiet code path.
+
+## Setup
+
+Install Rust with the toolchain in `rust-toolchain.toml` (1.98.1), including `rustfmt` and `clippy`.
+
+```bash
+cargo test --workspace
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+See [docs/development.md](docs/development.md) for the command list.
+
+## Tests
+
+Use synthetic directories under the process temp dir. Do not point tests at a home directory, `/`, `/System`, `/usr`, `/Library`, `/private`, `/bin`, or `/sbin`. Protected-root behavior is tested with pure path checks, not by walking those trees.
+
+`chmod 000` does not deny access when the test process is privileged. The permission test detects that and skips the filesystem assertion. Error aggregation is still covered by a unit test that does not depend on mode bits.
+
+## Scope of this repository
+
+The scan foundation is implemented. Duplicate detection, analyzers, recommendations, Trash, and the desktop UI are specified in `docs/` and are not implemented. Do not add those dependencies (`blake3`, `trash`, `notify`, `tauri`, `rayon`) until the roadmap item is actually being built.
+
+Do not add a permanent-delete API. See [docs/safety-model.md](docs/safety-model.md).
+
+## Pull requests
+
+- Keep commits focused.
+- Update [CHANGELOG.md](CHANGELOG.md) and [docs/features.md](docs/features.md) when a feature's status changes.
+- Do not mark a feature Done unless a test demonstrates it.
+- `cargo fmt` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` must pass.
+
+## License
+
+Contributions are dual-licensed under MIT OR Apache-2.0. See [LICENSE](LICENSE).

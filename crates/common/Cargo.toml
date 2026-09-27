@@ -1,0 +1,15 @@
+[package]
+name = "mac-storage-common"
+description = "Shared domain types for Mac Storage Advisor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

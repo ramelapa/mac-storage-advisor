@@ -1,0 +1,17 @@
+[package]
+name = "mac-storage-scanner"
+description = "Recursive, symlink-safe directory scanner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mac-storage-common = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+walkdir = { workspace = true }
+
+[lints]
+workspace = true

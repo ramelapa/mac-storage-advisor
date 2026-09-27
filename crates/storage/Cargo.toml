@@ -1,0 +1,17 @@
+[package]
+name = "mac-storage-storage"
+description = "SQLite persistence for scan metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+directories = { workspace = true }
+mac-storage-common = { workspace = true }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true
