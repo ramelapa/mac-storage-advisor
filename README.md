@@ -53,7 +53,7 @@ Or without installing:
 cargo run -p mac-storage -- scan ~/Downloads
 ```
 
-The database defaults to the platform data directory (`mac-storage.sqlite` under the `mac-storage-advisor` application directory). Override it with `--db` or `MAC_STORAGE_DB`.
+The database defaults to this app's own data directory and does not replace any other application's database. On macOS that file is `~/Library/Application Support/com.mac-storage.mac-storage-advisor/mac-storage.sqlite`. Override it with `--db` or `MAC_STORAGE_DB`. A path that already points at a different SQLite file is refused.
 
 ## CLI
 

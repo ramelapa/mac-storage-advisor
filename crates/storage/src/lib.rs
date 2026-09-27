@@ -35,6 +35,8 @@ pub enum StorageError {
     InvalidStatus(String),
     #[error("stored file type is invalid: {0}")]
     InvalidFileType(String),
+    #[error("refusing to open a SQLite file that is not a {product} database")]
+    ForeignDatabase { product: &'static str },
 }
 
 pub struct Database {
@@ -99,9 +101,34 @@ impl Database {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(Duration::from_secs(5))?;
         let db = Self { conn };
+        db.assert_compatible()?;
         db.migrate()?;
         db.ensure_settings()?;
         Ok(db)
+    }
+
+    /// A new file is ours. An existing file must already be this product's
+    /// database. Anything else is left untouched so a bad `--db` path cannot
+    /// migrate another application's SQLite file.
+    fn assert_compatible(&self) -> Result<(), StorageError> {
+        let names = user_tables(&self.conn)?;
+        if names.is_empty() {
+            return Ok(());
+        }
+        if let Some(product) = setting_if_present(&self.conn, &names, "product_name")? {
+            if product == PRODUCT_NAME {
+                return Ok(());
+            }
+            return Err(StorageError::ForeignDatabase {
+                product: PRODUCT_NAME,
+            });
+        }
+        if names.iter().any(|name| name == "scans") && names.iter().any(|name| name == "files") {
+            return Ok(());
+        }
+        Err(StorageError::ForeignDatabase {
+            product: PRODUCT_NAME,
+        })
     }
 
     pub fn migrate(&self) -> Result<(), StorageError> {
@@ -519,6 +546,39 @@ fn now_millis() -> i64 {
     time_to_millis(Some(SystemTime::now())).unwrap_or(0)
 }
 
+fn user_tables(conn: &Connection) -> Result<Vec<String>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+         ORDER BY name",
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    let mut names = Vec::new();
+    for row in rows {
+        names.push(row?);
+    }
+    Ok(names)
+}
+
+fn setting_if_present(
+    conn: &Connection,
+    tables: &[String],
+    key: &str,
+) -> Result<Option<String>, StorageError> {
+    if !tables.iter().any(|name| name == "settings") {
+        return Ok(None);
+    }
+    match conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    ) {
+        Ok(value) => Ok(Some(value)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,6 +772,22 @@ mod tests {
                 || message.to_ascii_lowercase().contains("constraint"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn refuses_to_migrate_an_unrelated_sqlite_file() {
+        let path = temp_db();
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch("CREATE TABLE notes (id INTEGER PRIMARY KEY);")
+                .unwrap();
+        }
+        let opened = Database::open(&path);
+        assert!(matches!(opened, Err(StorageError::ForeignDatabase { .. })));
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let names = super::user_tables(&conn).unwrap();
+        assert_eq!(names, vec!["notes".to_owned()]);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

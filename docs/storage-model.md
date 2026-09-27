@@ -14,9 +14,14 @@ Birth time is `Metadata::created`. On macOS this is usually the APFS birth time.
 
 ## Database location
 
-`directories::ProjectDirs` with qualifier `com`, organization `mac-storage`, and application `mac-storage-advisor`. The file is `mac-storage.sqlite` inside the platform data directory.
+`directories::ProjectDirs` with qualifier `com`, organization `mac-storage`, and application `mac-storage-advisor`. The file is `mac-storage.sqlite` inside that application directory only:
 
-Override with `--db PATH` or the `MAC_STORAGE_DB` environment variable. The flag wins. Tests set the environment variable so they never open the developer data directory.
+- macOS: `~/Library/Application Support/com.mac-storage.mac-storage-advisor/mac-storage.sqlite`
+- Linux: `~/.local/share/mac-storage-advisor/mac-storage.sqlite` (or `$XDG_DATA_HOME/mac-storage-advisor/`)
+
+Opening the database creates that directory and that file. It does not open, replace, or delete any other application's database. A later scan inserts rows into this file. It does not truncate it.
+
+Override with `--db PATH` or the `MAC_STORAGE_DB` environment variable. The flag wins. If that path already exists and is not this product's database, open fails and the file is left unchanged. Tests set the environment variable so they never open the developer data directory.
 
 If that file lives inside the directory you scan, a later scan will count it like any other file. The default data directory is outside folders such as `~/Downloads`.
 
