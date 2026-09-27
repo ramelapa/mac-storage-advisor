@@ -14,6 +14,9 @@ cargo run -p mac-storage -- scan /path/to/fixture --json
 cargo run -p mac-storage -- duplicates --json
 cargo run -p mac-storage -- large-files
 cargo run -p mac-storage -- history
+cargo run -p mac-storage -- analyze
+cargo run -p mac-storage -- recommendations
+cargo run -p mac-storage -- trends
 ```
 
 `cargo audit` is not part of CI. Run it locally if you want advisory output. Do not fail a release on an advisory that cannot be fixed without abandoning a required crate.
@@ -26,6 +29,7 @@ crates/common/     domain types and PRODUCT_NAME
 crates/scanner/    walk and exclusions
 crates/storage/    SQLite and migrations
 crates/duplicates/ BLAKE3 grouping over stored files
+crates/analyze/    suggestions from a stored scan
 docs/              design and status
 ```
 

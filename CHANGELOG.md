@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite migration 002: `content_hashes`, `duplicate_groups`, `duplicate_members`.
 - `mac-storage large-files` and `mac-storage history`.
 - Decision: `--threads` stays recorded only. Scanning and hashing remain one thread (`SCAN_CONCURRENCY = 1`).
+- `mac-storage analyze`, `recommendations`, and `trends`. Suggestions separate document duplicates from dependency-tree duplicates and Office `~$` lock files. Nothing is deleted. Trends compare scans of the same root only.
 
 ### Not in this version
 

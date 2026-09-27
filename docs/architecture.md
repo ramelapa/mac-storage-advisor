@@ -6,7 +6,7 @@ Mac Storage Advisor is a local Rust workspace. `scan` records metadata. `duplica
 
 ```mermaid
 flowchart TD
-    user[User] --> cli["mac-storage scan, duplicates, large-files, history"]
+    user[User] --> cli["mac-storage scan, duplicates, analyze, trends"]
     cli --> policy[Root policy and exclusions]
     policy --> walk["walkdir, single-threaded, follow_links false"]
     walk --> meta["symlink_metadata, no content reads"]
@@ -28,10 +28,11 @@ Logs go to stderr. They include scan start and finish with directory, file, byte
 | `mac-storage-common` | Display name, domain types, CLI-facing error | `serde`, `thiserror` |
 | `mac-storage-scanner` | Walk, exclusions, metadata | `common`, `walkdir`, `tracing` |
 | `mac-storage-duplicates` | Size, inode, and BLAKE3 grouping | `common`, `blake3` |
+| `mac-storage-analyze` | Stale files, Downloads, artifact trees, suggestions, trends | `common` |
 | `mac-storage-storage` | SQLite open, migrations, save/load | `common`, `rusqlite`, `directories` |
-| `mac-storage` (`apps/cli`) | `scan`, `duplicates`, `large-files`, `history` | all of the above, `clap`, `tracing-subscriber` |
+| `mac-storage` (`apps/cli`) | `scan`, `duplicates`, `large-files`, `history`, `analyze`, `recommendations`, `trends` | all of the above, `clap`, `tracing-subscriber` |
 
-`common` does not depend on the scanner, duplicates, or storage. The scanner does not depend on storage and does not read file contents. The duplicates crate does not depend on storage. The CLI loads rows, runs the pass, and writes hashes back.
+`common` does not depend on the scanner, duplicates, analyze, or storage. The scanner does not depend on storage and does not read file contents. The duplicates and analyze crates do not depend on storage. The CLI loads rows, runs the pass, and writes hashes back. Suggestions are computed when requested and are not stored.
 
 The display name is `PRODUCT_NAME` in `crates/common`. Binary and package names stay `mac-storage` / `mac-storage-*`.
 

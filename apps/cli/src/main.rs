@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod advise;
 mod query;
 mod report;
 mod size;
@@ -31,9 +32,14 @@ Examples:
   mac-storage duplicates --verify --json
   mac-storage large-files --limit 20
   mac-storage history
+  mac-storage analyze
+  mac-storage recommendations
+  mac-storage trends
 
 Planned commands (not implemented):
-  developer, report, recommendations, doctor
+  doctor
+
+Tauri and move-to-Trash are not in this version. Suggestions never delete files.
 
 --threads is accepted and stored. Scanning and hashing run on one thread.
 Exclusions: a name (node_modules), a path prefix (sub/dir or /abs/path), or a glob
@@ -58,6 +64,12 @@ enum Command {
     LargeFiles(query::LargeArgs),
     /// List scans already stored in the local database.
     History(query::HistoryArgs),
+    /// Review stale files, Downloads, and developer-artifact directories.
+    Analyze(advise::AnalyzeArgs),
+    /// Suggest what to look at. Does not delete or move anything.
+    Recommendations(advise::AnalyzeArgs),
+    /// Compare logical and allocated totals for the same folder across scans.
+    Trends(advise::TrendsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -119,6 +131,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Duplicates(args) => query::duplicates_command(args),
         Command::LargeFiles(args) => query::large_files_command(args),
         Command::History(args) => query::history_command(args),
+        Command::Analyze(args) => advise::analyze_command(args),
+        Command::Recommendations(args) => advise::recommendations_command(args),
+        Command::Trends(args) => advise::trends_command(args),
     }
 }
 

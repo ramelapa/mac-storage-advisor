@@ -5,11 +5,12 @@ members = [
     "crates/scanner",
     "crates/storage",
     "crates/duplicates",
+    "crates/analyze",
     "apps/cli",
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -19,6 +20,7 @@ publish = false
 blake3 = "1.5"
 clap = { version = "4.5", features = ["derive"] }
 directories = "5"
+mac-storage-analyze = { path = "crates/analyze" }
 mac-storage-common = { path = "crates/common" }
 mac-storage-duplicates = { path = "crates/duplicates" }
 mac-storage-scanner = { path = "crates/scanner" }

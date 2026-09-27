@@ -17,10 +17,13 @@ Nothing is uploaded or deleted. Duplicate groups report extra content copies. Th
 - `mac-storage duplicates` groups identical regular files from a stored scan (size, then inode, then sample BLAKE3, then full BLAKE3). `--verify` re-reads candidates.
 - `mac-storage large-files` lists the largest stored regular files.
 - `mac-storage history` lists previous scans.
+- `mac-storage analyze` reviews stale files, a Downloads folder, and developer-artifact directories.
+- `mac-storage recommendations` prints suggestions only. It does not delete anything.
+- `mac-storage trends` compares totals for the same folder across scans.
 
 ## Planned
 
-Stale files, Downloads and developer-artifact reviews, recommendations, trends, move-to-Trash, and a Tauri UI. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
+Move-to-Trash, a Tauri UI, iCloud placeholder handling, and APFS clone awareness. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
 
 Not in the MVP: AI suggestions, cloud sync, cross-device inventory, automatic or permanent deletion, photo/video similarity, semantic duplicates, and Windows or Linux as packaged products.
 
@@ -69,6 +72,9 @@ mac-storage duplicates
 mac-storage duplicates --verify --json
 mac-storage large-files --limit 20
 mac-storage history
+mac-storage analyze
+mac-storage recommendations
+mac-storage trends
 ```
 
 | Flag | Behavior |
@@ -92,7 +98,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -124,9 +130,11 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 - `--exclude 'Downloads/*.dmg'` matches that suffix, not files in a nested folder.
 - `--exclude '/tmp/**/*.txt'` is an absolute glob.
 
-`duplicates`, `large-files`, and `history` read the newest scan unless `--scan ID` is set. They exit 1 when the database has no scans. Hash errors are listed and do not abort the rest of the group. Help text still names planned commands that are not implemented: `developer`, `report`, `recommendations`, `doctor`.
+`duplicates`, `large-files`, `history`, `analyze`, and `recommendations` read the newest scan unless `--scan ID` is set. They exit 1 when the database has no scans. Hash errors are listed and do not abort the rest of the group. `doctor` is still only named in the help text.
 
 `duplicates --json` includes `duplicate_groups`, `hard_link_sets`, and `hash_errors`. File bytes are not in that object. `redundant_bytes` counts extra content copies after hard links are collapsed. Zero-byte files are not reported as duplicates.
+
+`analyze` skips build directories and `~$` Office lock files when it counts stale files. Duplicate groups that sit entirely inside those directories are reported as package metadata, not as extra documents. `trends` only subtracts two scans of the same root.
 
 ## Development
 
@@ -140,7 +148,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.2 adds duplicate grouping, large-file listing, and scan history on top of the v0.1 scan. Feature status is authoritative in [docs/features.md](docs/features.md). Analyzers, recommendations, Trash, and the desktop UI are still later work. `--threads` stays single-threaded.
+v0.3 adds `analyze`, `recommendations`, and `trends` on top of the v0.2 scan and duplicate pass. Feature status is authoritative in [docs/features.md](docs/features.md). Trash and the desktop UI are still later work. `--threads` stays single-threaded.
 
 ## Limitations
 

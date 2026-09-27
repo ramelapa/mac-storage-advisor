@@ -66,6 +66,7 @@ pub struct ScanSummary {
     pub directories_scanned: u64,
     pub files_scanned: u64,
     pub logical_bytes: u64,
+    pub allocated_bytes: u64,
     pub error_count: u64,
     pub elapsed_ms: u64,
 }
@@ -305,7 +306,8 @@ impl Database {
     pub fn list_scans(&self, limit: u64) -> Result<Vec<ScanSummary>, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, root_path, started_at, finished_at, status,
-                    directories_scanned, files_scanned, logical_bytes, error_count, elapsed_ms
+                    directories_scanned, files_scanned, logical_bytes, allocated_bytes,
+                    error_count, elapsed_ms
              FROM scans ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![req_i64(limit)?], |row| {
@@ -320,6 +322,7 @@ impl Database {
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
                 row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
             ))
         })?;
         let mut scans = Vec::new();
@@ -333,6 +336,7 @@ impl Database {
                 directories,
                 files,
                 logical,
+                allocated,
                 errors,
                 elapsed,
             ) = row?;
@@ -347,6 +351,7 @@ impl Database {
                 directories_scanned: row_u64_value(directories)?,
                 files_scanned: row_u64_value(files)?,
                 logical_bytes: row_u64_value(logical)?,
+                allocated_bytes: row_u64_value(allocated)?,
                 error_count: row_u64_value(errors)?,
                 elapsed_ms: row_u64_value(elapsed)?,
             });

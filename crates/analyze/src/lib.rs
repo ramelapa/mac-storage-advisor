@@ -1,0 +1,780 @@
+//! Reviews a stored scan and emits suggestions.
+//!
+//! This crate does not read file contents, hash files, or delete paths.
+//! Logical bytes are inventory totals, not a promise of free disk space.
+
+#![forbid(unsafe_code)]
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use mac_storage_common::{RecommendationCategory, RiskLevel};
+use serde::Serialize;
+
+/// Files last modified at least this long ago are stale. Artifact trees are
+/// not included in that count.
+pub const DEFAULT_STALE_DAYS: u64 = 180;
+
+const MEDIUM_DUPLICATE_BYTES: u64 = 1024 * 1024;
+const PREVIEW: usize = 6;
+
+/// One regular file from a stored scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InventoryFile {
+    pub path: PathBuf,
+    pub logical_size: u64,
+    pub modified: Option<SystemTime>,
+    pub extension: Option<String>,
+}
+
+/// A content-duplicate group already computed for the scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateSet {
+    pub logical_size: u64,
+    pub redundant_bytes: u64,
+    pub paths: Vec<PathBuf>,
+}
+
+/// One stored scan total, used to compare the same root over time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TrendPoint {
+    pub scan_id: i64,
+    pub root: PathBuf,
+    pub logical_bytes: u64,
+    pub allocated_bytes: u64,
+    pub files_scanned: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdvisorReport {
+    pub stale: StaleSummary,
+    pub downloads: DownloadsSummary,
+    pub developer: DeveloperSummary,
+    pub office_locks: OfficeLockSummary,
+    pub recommendations: Vec<Recommendation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StaleSummary {
+    pub older_than_days: u64,
+    pub file_count: u64,
+    pub logical_bytes: u64,
+    pub files: Vec<PathSize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DownloadsSummary {
+    /// True when the scan root's last component is `Downloads`.
+    pub applies: bool,
+    pub categories: Vec<DownloadCategory>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DownloadCategory {
+    pub name: &'static str,
+    pub file_count: u64,
+    pub logical_bytes: u64,
+    pub largest: Vec<PathSize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DeveloperSummary {
+    pub trees: Vec<ArtifactTree>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ArtifactTree {
+    pub path: PathBuf,
+    pub kind: &'static str,
+    pub file_count: u64,
+    pub logical_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OfficeLockSummary {
+    pub file_count: u64,
+    pub logical_bytes: u64,
+    pub files: Vec<PathSize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PathSize {
+    pub path: PathBuf,
+    pub logical_size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Recommendation {
+    pub category: RecommendationCategory,
+    pub risk: RiskLevel,
+    pub title: String,
+    pub detail: String,
+    pub logical_bytes: u64,
+    pub paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TrendSeries {
+    pub root: PathBuf,
+    /// Oldest scan first.
+    pub points: Vec<TrendPoint>,
+    /// Newest logical total minus the previous scan of this same root.
+    pub logical_delta: Option<i64>,
+    pub allocated_delta: Option<i64>,
+}
+
+/// Build the review for one scan.
+///
+/// `now` and `stale_after` are arguments so tests do not depend on the clock.
+/// Files inside a developer-artifact directory, and Office `~$` lock files,
+/// are left out of the stale and Downloads tallies.
+pub fn advise(
+    root: &Path,
+    files: &[InventoryFile],
+    duplicates: &[DuplicateSet],
+    now: SystemTime,
+    stale_after: Duration,
+) -> AdvisorReport {
+    let stale_days = days_in(stale_after);
+    let mut stale_files = Vec::new();
+    let mut categories: BTreeMap<&'static str, Vec<&InventoryFile>> = BTreeMap::new();
+    let mut trees: BTreeMap<PathBuf, ArtifactAccum> = BTreeMap::new();
+    let mut office = Vec::new();
+    let downloads_root = is_downloads_root(root);
+
+    for file in files {
+        if is_office_lock(&file.path) {
+            office.push(file);
+            continue;
+        }
+        if let Some((tree, kind)) = artifact_root(&file.path) {
+            let entry = trees.entry(tree).or_insert(ArtifactAccum {
+                kind,
+                file_count: 0,
+                logical_bytes: 0,
+            });
+            entry.file_count += 1;
+            entry.logical_bytes = entry.logical_bytes.saturating_add(file.logical_size);
+            continue;
+        }
+        if let Some(modified) = file.modified {
+            if is_stale(modified, now, stale_after) {
+                stale_files.push(file);
+            }
+        }
+        if downloads_root {
+            categories
+                .entry(download_category(file.extension.as_deref()))
+                .or_default()
+                .push(file);
+        }
+    }
+
+    stale_files.sort_by(|left, right| {
+        right
+            .logical_size
+            .cmp(&left.logical_size)
+            .then(left.path.cmp(&right.path))
+    });
+    office.sort_by(|left, right| left.path.cmp(&right.path));
+
+    let stale = StaleSummary {
+        older_than_days: stale_days,
+        file_count: u64::try_from(stale_files.len()).unwrap_or(u64::MAX),
+        logical_bytes: sum_sizes(&stale_files),
+        files: preview_files(&stale_files),
+    };
+    let downloads = DownloadsSummary {
+        applies: downloads_root,
+        categories: if downloads_root {
+            category_totals(&categories)
+        } else {
+            Vec::new()
+        },
+    };
+    let mut developer_trees: Vec<ArtifactTree> = trees
+        .into_iter()
+        .map(|(path, accum)| ArtifactTree {
+            path,
+            kind: accum.kind,
+            file_count: accum.file_count,
+            logical_bytes: accum.logical_bytes,
+        })
+        .collect();
+    developer_trees.sort_by(|left, right| {
+        right
+            .logical_bytes
+            .cmp(&left.logical_bytes)
+            .then(left.path.cmp(&right.path))
+    });
+    let developer = DeveloperSummary {
+        trees: developer_trees,
+    };
+    let office_locks = OfficeLockSummary {
+        file_count: u64::try_from(office.len()).unwrap_or(u64::MAX),
+        logical_bytes: sum_sizes(&office),
+        files: preview_files(&office),
+    };
+    let recommendations =
+        recommendations_for(&stale, &downloads, &developer, &office_locks, duplicates);
+    AdvisorReport {
+        stale,
+        downloads,
+        developer,
+        office_locks,
+        recommendations,
+    }
+}
+
+/// Compare scans of the same root. Scans of different folders are not subtracted.
+pub fn trends(mut points: Vec<TrendPoint>) -> Vec<TrendSeries> {
+    points.sort_by(|left, right| {
+        left.root
+            .cmp(&right.root)
+            .then(left.scan_id.cmp(&right.scan_id))
+    });
+    let mut series = Vec::new();
+    let mut current: Option<TrendSeries> = None;
+    for point in points {
+        let same = current
+            .as_ref()
+            .is_some_and(|series| series.root == point.root);
+        if !same {
+            if let Some(done) = current.take() {
+                series.push(done);
+            }
+            current = Some(TrendSeries {
+                root: point.root.clone(),
+                points: Vec::new(),
+                logical_delta: None,
+                allocated_delta: None,
+            });
+        }
+        let bucket = current.as_mut().expect("series just inserted");
+        if let Some(previous) = bucket.points.last() {
+            bucket.logical_delta = Some(signed_delta(point.logical_bytes, previous.logical_bytes));
+            bucket.allocated_delta = Some(signed_delta(
+                point.allocated_bytes,
+                previous.allocated_bytes,
+            ));
+        }
+        bucket.points.push(point);
+    }
+    if let Some(done) = current {
+        series.push(done);
+    }
+    series
+}
+
+pub fn stale_duration(days: u64) -> Duration {
+    Duration::from_secs(days.saturating_mul(24 * 60 * 60))
+}
+
+struct ArtifactAccum {
+    kind: &'static str,
+    file_count: u64,
+    logical_bytes: u64,
+}
+
+fn recommendations_for(
+    stale: &StaleSummary,
+    downloads: &DownloadsSummary,
+    developer: &DeveloperSummary,
+    office: &OfficeLockSummary,
+    duplicates: &[DuplicateSet],
+) -> Vec<Recommendation> {
+    let mut recommendations = Vec::new();
+    let mut artifact_groups = 0u64;
+    let mut artifact_bytes = 0u64;
+
+    if duplicates.is_empty() {
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::Duplicates,
+            risk: RiskLevel::Info,
+            title: "Duplicate groups have not been stored".into(),
+            detail: "Run `mac-storage duplicates` before expecting content copies in this list. This command does not hash files itself.".into(),
+            logical_bytes: 0,
+            paths: Vec::new(),
+        });
+    }
+
+    for set in duplicates {
+        if set.redundant_bytes == 0 || set.paths.len() < 2 {
+            continue;
+        }
+        if set.paths.iter().all(|path| is_office_lock(path)) {
+            continue;
+        }
+        if set.paths.iter().all(|path| artifact_root(path).is_some()) {
+            artifact_groups += 1;
+            artifact_bytes = artifact_bytes.saturating_add(set.redundant_bytes);
+            continue;
+        }
+        let risk = if set.redundant_bytes >= MEDIUM_DUPLICATE_BYTES {
+            RiskLevel::Medium
+        } else {
+            RiskLevel::Low
+        };
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::Duplicates,
+            risk,
+            title: "Identical files".into(),
+            detail: format!(
+                "{} copies share the same bytes ({} logical bytes each). Extra copies account for {} logical bytes. Hard links are not multiplied, and nothing will be deleted.",
+                set.paths.len(),
+                set.logical_size,
+                set.redundant_bytes
+            ),
+            logical_bytes: set.redundant_bytes,
+            paths: set.paths.iter().take(PREVIEW).cloned().collect(),
+        });
+    }
+
+    if artifact_groups > 0 {
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::Duplicates,
+            risk: RiskLevel::Info,
+            title: "Duplicate groups inside build directories".into(),
+            detail: format!(
+                "{artifact_groups} identical groups sit entirely inside dependency or build directories. They are usually package metadata, not extra documents."
+            ),
+            logical_bytes: artifact_bytes,
+            paths: Vec::new(),
+        });
+    }
+
+    for tree in developer.trees.iter().take(PREVIEW) {
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::DeveloperArtifacts,
+            risk: RiskLevel::Low,
+            title: format!("Build directory ({})", tree.kind),
+            detail: format!(
+                "Review {}. It contains {} files and {} logical bytes. This suggestion does not delete it.",
+                tree.path.display(),
+                tree.file_count,
+                tree.logical_bytes
+            ),
+            logical_bytes: tree.logical_bytes,
+            paths: vec![tree.path.clone()],
+        });
+    }
+
+    if stale.file_count > 0 {
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::StaleFiles,
+            risk: RiskLevel::Low,
+            title: format!("Files unchanged for {} days", stale.older_than_days),
+            detail: format!(
+                "{} files outside build directories have a modified time at least {} days old, totaling {} logical bytes.",
+                stale.file_count, stale.older_than_days, stale.logical_bytes
+            ),
+            logical_bytes: stale.logical_bytes,
+            paths: stale.files.iter().take(PREVIEW).map(|file| file.path.clone()).collect(),
+        });
+    }
+
+    if let Some(installers) = downloads
+        .categories
+        .iter()
+        .find(|category| category.name == "installers")
+    {
+        if installers.file_count > 0 {
+            recommendations.push(Recommendation {
+                category: RecommendationCategory::Downloads,
+                risk: RiskLevel::Low,
+                title: "Installer images are still in Downloads".into(),
+                detail: format!(
+                    "{} installer file(s) account for {} logical bytes. This is a review, not a cleanup.",
+                    installers.file_count, installers.logical_bytes
+                ),
+                logical_bytes: installers.logical_bytes,
+                paths: installers
+                    .largest
+                    .iter()
+                    .take(PREVIEW)
+                    .map(|file| file.path.clone())
+                    .collect(),
+            });
+        }
+    }
+
+    if office.file_count > 0 {
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::Caches,
+            risk: RiskLevel::Info,
+            title: "Office lock files".into(),
+            detail: "Names starting with ~$ are editor lock files. Matching hashes among them are not extra copies of the document.".into(),
+            logical_bytes: office.logical_bytes,
+            paths: office.files.iter().take(PREVIEW).map(|file| file.path.clone()).collect(),
+        });
+    }
+
+    recommendations.sort_by(|left, right| {
+        risk_rank(left.risk)
+            .cmp(&risk_rank(right.risk))
+            .then(right.logical_bytes.cmp(&left.logical_bytes))
+            .then(left.title.cmp(&right.title))
+    });
+    recommendations
+}
+
+fn category_totals(grouped: &BTreeMap<&'static str, Vec<&InventoryFile>>) -> Vec<DownloadCategory> {
+    let mut categories: Vec<DownloadCategory> = grouped
+        .iter()
+        .map(|(name, files)| {
+            let mut largest: Vec<PathSize> = files
+                .iter()
+                .map(|file| PathSize {
+                    path: file.path.clone(),
+                    logical_size: file.logical_size,
+                })
+                .collect();
+            largest.sort_by(|left, right| {
+                right
+                    .logical_size
+                    .cmp(&left.logical_size)
+                    .then(left.path.cmp(&right.path))
+            });
+            largest.truncate(PREVIEW);
+            DownloadCategory {
+                name,
+                file_count: u64::try_from(files.len()).unwrap_or(u64::MAX),
+                logical_bytes: files
+                    .iter()
+                    .fold(0u64, |sum, file| sum.saturating_add(file.logical_size)),
+                largest,
+            }
+        })
+        .collect();
+    categories.sort_by(|left, right| {
+        right
+            .logical_bytes
+            .cmp(&left.logical_bytes)
+            .then(left.name.cmp(right.name))
+    });
+    categories
+}
+
+fn preview_files(files: &[&InventoryFile]) -> Vec<PathSize> {
+    files
+        .iter()
+        .take(PREVIEW)
+        .map(|file| PathSize {
+            path: file.path.clone(),
+            logical_size: file.logical_size,
+        })
+        .collect()
+}
+
+fn sum_sizes(files: &[&InventoryFile]) -> u64 {
+    files
+        .iter()
+        .fold(0u64, |sum, file| sum.saturating_add(file.logical_size))
+}
+
+fn is_downloads_root(root: &Path) -> bool {
+    root.file_name().and_then(|name| name.to_str()) == Some("Downloads")
+}
+
+fn is_office_lock(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("~$"))
+}
+
+fn artifact_root(path: &Path) -> Option<(PathBuf, &'static str)> {
+    let mut acc = PathBuf::new();
+    for component in path.components() {
+        acc.push(component);
+        let Some(name) = component.as_os_str().to_str() else {
+            continue;
+        };
+        if let Some(kind) = artifact_kind(name) {
+            return Some((acc, kind));
+        }
+    }
+    None
+}
+
+fn artifact_kind(name: &str) -> Option<&'static str> {
+    match name {
+        "node_modules" => Some("node_modules"),
+        "target" => Some("target"),
+        ".venv" => Some(".venv"),
+        "venv" => Some("venv"),
+        "site-packages" => Some("site-packages"),
+        "__pycache__" => Some("__pycache__"),
+        ".tox" => Some(".tox"),
+        ".gradle" => Some(".gradle"),
+        _ if name.ends_with(".egg-info") || name.ends_with(".dist-info") => Some("python metadata"),
+        _ => None,
+    }
+}
+
+fn download_category(extension: Option<&str>) -> &'static str {
+    match extension.unwrap_or("").to_ascii_lowercase().as_str() {
+        "dmg" | "pkg" | "iso" => "installers",
+        "zip" | "tar" | "gz" | "tgz" | "bz2" | "7z" | "rar" => "archives",
+        "pdf" | "doc" | "docx" | "ppt" | "pptx" | "xls" | "xlsx" | "txt" | "md" => "documents",
+        "mp4" | "mov" | "wmv" | "mp3" | "jpeg" | "jpg" | "png" | "gif" | "heic" | "mid" => "media",
+        _ => "other",
+    }
+}
+
+fn is_stale(modified: SystemTime, now: SystemTime, stale_after: Duration) -> bool {
+    now.duration_since(modified)
+        .is_ok_and(|age| age >= stale_after)
+}
+
+fn days_in(duration: Duration) -> u64 {
+    duration.as_secs() / (24 * 60 * 60)
+}
+
+fn risk_rank(risk: RiskLevel) -> u8 {
+    match risk {
+        RiskLevel::High => 0,
+        RiskLevel::Medium => 1,
+        RiskLevel::Low => 2,
+        RiskLevel::Info => 3,
+    }
+}
+
+fn signed_delta(newest: u64, previous: u64) -> i64 {
+    let newest = i64::try_from(newest).unwrap_or(i64::MAX);
+    let previous = i64::try_from(previous).unwrap_or(i64::MAX);
+    newest.saturating_sub(previous)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(
+        path: &str,
+        size: u64,
+        age_days: Option<u64>,
+        extension: Option<&str>,
+    ) -> InventoryFile {
+        let modified = age_days.map(|days| {
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_000 * 24 * 60 * 60)
+                - Duration::from_secs(days * 24 * 60 * 60)
+        });
+        InventoryFile {
+            path: PathBuf::from(path),
+            logical_size: size,
+            modified,
+            extension: extension.map(str::to_owned),
+        }
+    }
+
+    fn now() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_000 * 24 * 60 * 60)
+    }
+
+    #[test]
+    fn stale_files_skip_build_trees_and_missing_mtime() {
+        let files = vec![
+            file("/Users/ram/Downloads/old.pdf", 50, Some(400), Some("pdf")),
+            file("/Users/ram/Downloads/new.pdf", 10, Some(1), Some("pdf")),
+            file("/Users/ram/Downloads/unknown.pdf", 9, None, Some("pdf")),
+            file(
+                "/Users/ram/Downloads/proj/.venv/lib/old.py",
+                80,
+                Some(400),
+                Some("py"),
+            ),
+        ];
+        let report = advise(
+            Path::new("/Users/ram/Downloads"),
+            &files,
+            &[],
+            now(),
+            stale_duration(180),
+        );
+        assert_eq!(report.stale.file_count, 1);
+        assert_eq!(report.stale.logical_bytes, 50);
+        assert_eq!(
+            report.stale.files[0].path,
+            PathBuf::from("/Users/ram/Downloads/old.pdf")
+        );
+        assert_eq!(report.developer.trees.len(), 1);
+        assert_eq!(report.developer.trees[0].kind, ".venv");
+        assert!(report.developer.trees[0].path.ends_with("proj/.venv"));
+    }
+
+    #[test]
+    fn site_packages_inside_venv_is_one_tree() {
+        let files = vec![file(
+            "/tmp/Downloads/app/.venv/lib/site-packages/pkg/a.py",
+            4,
+            Some(1),
+            Some("py"),
+        )];
+        let report = advise(
+            Path::new("/tmp/Downloads"),
+            &files,
+            &[],
+            now(),
+            stale_duration(180),
+        );
+        assert_eq!(report.developer.trees.len(), 1);
+        assert!(report.developer.trees[0].path.ends_with(".venv"));
+    }
+
+    #[test]
+    fn downloads_review_classifies_installers_and_ignores_other_roots() {
+        let files = vec![
+            file("/Users/ram/Downloads/Grok.dmg", 100, Some(1), Some("DMG")),
+            file("/Users/ram/Downloads/notes.pdf", 20, Some(1), Some("pdf")),
+        ];
+        let report = advise(
+            Path::new("/Users/ram/Downloads"),
+            &files,
+            &[],
+            now(),
+            stale_duration(180),
+        );
+        assert!(report.downloads.applies);
+        let installers = report
+            .downloads
+            .categories
+            .iter()
+            .find(|category| category.name == "installers")
+            .unwrap();
+        assert_eq!(installers.file_count, 1);
+        assert_eq!(installers.logical_bytes, 100);
+        let other_root = advise(
+            Path::new("/Users/ram/Documents"),
+            &files,
+            &[],
+            now(),
+            stale_duration(180),
+        );
+        assert!(!other_root.downloads.applies);
+        assert!(other_root.downloads.categories.is_empty());
+    }
+
+    #[test]
+    fn suggestions_separate_documents_from_package_metadata_and_lock_files() {
+        let files = vec![
+            file(
+                "/Users/ram/Downloads/~$notes.docx",
+                162,
+                Some(1),
+                Some("docx"),
+            ),
+            file(
+                "/Users/ram/Downloads/proj/.venv/a.py",
+                10,
+                Some(1),
+                Some("py"),
+            ),
+        ];
+        let duplicates = vec![
+            DuplicateSet {
+                logical_size: 3_000_000,
+                redundant_bytes: 3_000_000,
+                paths: vec![
+                    PathBuf::from("/Users/ram/Downloads/a.pdf"),
+                    PathBuf::from("/Users/ram/Downloads/a (1).pdf"),
+                ],
+            },
+            DuplicateSet {
+                logical_size: 2,
+                redundant_bytes: 96,
+                paths: vec![
+                    PathBuf::from("/Users/ram/Downloads/proj/.venv/INSTALLER"),
+                    PathBuf::from("/Users/ram/Downloads/proj/.venv/other/INSTALLER"),
+                ],
+            },
+            DuplicateSet {
+                logical_size: 162,
+                redundant_bytes: 162,
+                paths: vec![
+                    PathBuf::from("/Users/ram/Downloads/~$one.docx"),
+                    PathBuf::from("/Users/ram/Downloads/~$two.docx"),
+                ],
+            },
+        ];
+        let report = advise(
+            Path::new("/Users/ram/Downloads"),
+            &files,
+            &duplicates,
+            now(),
+            stale_duration(180),
+        );
+        let identical = report
+            .recommendations
+            .iter()
+            .find(|item| item.title == "Identical files")
+            .unwrap();
+        assert_eq!(identical.risk, RiskLevel::Medium);
+        assert_eq!(identical.logical_bytes, 3_000_000);
+        assert!(report.recommendations.iter().any(|item| {
+            item.title == "Duplicate groups inside build directories"
+                && item.risk == RiskLevel::Info
+        }));
+        assert!(report
+            .recommendations
+            .iter()
+            .any(|item| item.category == RecommendationCategory::Caches));
+        assert!(report
+            .recommendations
+            .iter()
+            .all(|item| item.risk != RiskLevel::High));
+        let small = DuplicateSet {
+            logical_size: 5,
+            redundant_bytes: 5,
+            paths: vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")],
+        };
+        let small_report = advise(
+            Path::new("/tmp/box"),
+            &[],
+            &[small],
+            now(),
+            stale_duration(180),
+        );
+        assert_eq!(small_report.recommendations[0].risk, RiskLevel::Low);
+    }
+
+    #[test]
+    fn trends_do_not_subtract_different_roots() {
+        let series = trends(vec![
+            TrendPoint {
+                scan_id: 1,
+                root: PathBuf::from("/Users/ram/Downloads"),
+                logical_bytes: 100,
+                allocated_bytes: 200,
+                files_scanned: 2,
+            },
+            TrendPoint {
+                scan_id: 2,
+                root: PathBuf::from("/Users/ram/Documents"),
+                logical_bytes: 40,
+                allocated_bytes: 40,
+                files_scanned: 1,
+            },
+            TrendPoint {
+                scan_id: 3,
+                root: PathBuf::from("/Users/ram/Downloads"),
+                logical_bytes: 80,
+                allocated_bytes: 150,
+                files_scanned: 2,
+            },
+        ]);
+        assert_eq!(series.len(), 2);
+        let downloads = series
+            .iter()
+            .find(|item| item.root.ends_with("Downloads"))
+            .unwrap();
+        assert_eq!(downloads.points.len(), 2);
+        assert_eq!(downloads.logical_delta, Some(-20));
+        assert_eq!(downloads.allocated_delta, Some(-50));
+        let documents = series
+            .iter()
+            .find(|item| item.root.ends_with("Documents"))
+            .unwrap();
+        assert_eq!(documents.logical_delta, None);
+    }
+}

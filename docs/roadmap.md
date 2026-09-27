@@ -1,6 +1,6 @@
 # Roadmap
 
-v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. Analyzers and the desktop UI are still later.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. The desktop UI and Trash are still later.
 
 ## v0.1 — Foundation (this version)
 
@@ -29,11 +29,17 @@ Done:
 
 ### v0.3
 
+Done:
+
 - Stale files, Downloads, and developer-artifact analyzers
 - Recommendation engine that only emits suggestions
-- Trends across scan totals
+- Trends across scan totals of the same folder
+
+Still planned in this release line:
+
 - Tauri UI on the same Rust core
 - Move to Trash as the only remediation
+- iCloud placeholder handling and APFS clone awareness
 
 ## Future / Deferred
 

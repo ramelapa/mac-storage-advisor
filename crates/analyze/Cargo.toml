@@ -1,0 +1,15 @@
+[package]
+name = "mac-storage-analyze"
+description = "Suggestions from a stored scan. Nothing is deleted."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mac-storage-common = { workspace = true }
+serde = { workspace = true }
+
+[lints]
+workspace = true

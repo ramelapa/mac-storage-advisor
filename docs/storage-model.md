@@ -56,7 +56,7 @@ Opening a v0.1 database applies migration 2. `settings.schema_version` becomes `
 
 `mac-storage duplicates` deletes and rewrites those rows for the chosen scan. It does not change `scans.logical_bytes`.
 
-`recommendations` and `trend_points` are still not created.
+Suggestions and trends are computed when the command runs. They are not stored. `recommendations` and `trend_points` tables are still not created. Trend numbers come from the existing `scans` totals, and only scans of the same root are compared.
 
 ## Memory
 

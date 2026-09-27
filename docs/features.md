@@ -2,7 +2,7 @@
 
 Status values: Planned, In Progress, Done, Deferred, Experimental.
 
-Only rows with automated tests are Done. Duplicate detection, large files, and history landed in 0.2. Scanning and hashing stay one thread.
+Only rows with automated tests are Done. v0.3 adds review suggestions. Scanning and hashing stay one thread. Tauri and Trash are still planned.
 
 | ID | Feature | Status | Release | Description |
 | --- | --- | --- | --- | --- |
@@ -21,11 +21,11 @@ Only rows with automated tests are Done. Duplicate detection, large files, and h
 | F-013 | Hard-link grouping | Done | 0.2 | Same `(device_id, inode)` is one content copy. Every path is listed. Redundant bytes do not multiply those paths. Scan `logical_bytes` still count each path. |
 | F-014 | Large file report | Done | 0.2 | `mac-storage large-files` lists the largest stored regular files. |
 | F-015 | History command | Done | 0.2 | `mac-storage history` reads previous scan rows, newest first. |
-| F-016 | Stale file analyzer | Planned | 0.3 | Surface old files using stored timestamps. No policy engine yet. |
-| F-017 | Downloads analyzer | Planned | 0.3 | Review typical download locations. Not implemented. |
-| F-018 | Developer artifact analyzer | Planned | 0.3 | `target`, `node_modules`, and similar build outputs. Exclusion by name works today; there is no analyzer. |
-| F-019 | Recommendation engine | Planned | 0.3 | Non-destructive suggestions. `RiskLevel` and `RecommendationCategory` exist as types only. |
-| F-020 | Storage trends | Planned | 0.3 | Compare logical and allocated totals across scans. |
+| F-016 | Stale file analyzer | Done | 0.3 | Files whose modified time is at least 180 days old, skipping build directories and Office lock files. |
+| F-017 | Downloads analyzer | Done | 0.3 | When the scan root is named Downloads, group user files into installers, archives, documents, media, and other. |
+| F-018 | Developer artifact analyzer | Done | 0.3 | Rolls up `node_modules`, `target`, `.venv`, `site-packages`, and similar directories. The earliest matching component wins. |
+| F-019 | Recommendation engine | Done | 0.3 | Suggestions only. Document duplicates stay separate from package-metadata duplicates and `~$` lock files. Nothing is deleted. |
+| F-020 | Storage trends | Done | 0.3 | Compare logical and allocated totals across scans of the same root. Different folders are not subtracted. |
 | F-021 | Tauri desktop UI | Planned | 0.3 | Share the Rust core. No UI crate in this workspace. |
 | F-022 | Move to Trash | Planned | 0.3 | Later remediation moves items to the OS Trash. Not implemented. |
 | F-023 | Parallel scanning | Deferred | 0.2 | Decided: stay single-threaded. `--threads` is stored. `SCAN_CONCURRENCY` is 1 for scanning and hashing. No thread pool. |

@@ -9,6 +9,7 @@ This version scans and can hash a stored scan. It does not delete, move, or tras
 - Writes a SQLite database of metadata under the platform data directory, or under `MAC_STORAGE_DB` / `--db`.
 - Prints a summary. `--json` includes error paths and messages.
 - `duplicates` opens regular files that a scan already stored, hashes them with BLAKE3, and can re-read them when `--verify` is set. The hash is stored. The bytes are not.
+- `analyze` and `recommendations` read stored metadata and duplicate groups. They print suggestions. They do not move files.
 
 ## What this version does not do
 

@@ -223,7 +223,7 @@ impl FileKind {
     }
 }
 
-/// Placeholder for a future recommendation. The scanner does not assign these.
+/// How careful a suggestion is. The advisor does not assign High.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
@@ -233,7 +233,7 @@ pub enum RiskLevel {
     High,
 }
 
-/// Placeholder categories for a future recommendation engine.
+/// Why a suggestion was emitted. The advisor does not delete the paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecommendationCategory {

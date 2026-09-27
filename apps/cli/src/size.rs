@@ -55,6 +55,20 @@ impl fmt::Display for SizeParseError {
 
 impl std::error::Error for SizeParseError {}
 
+/// Parse a stale-file age. `180` and `180d` are both days.
+pub fn parse_days(raw: &str) -> Result<u64, SizeParseError> {
+    let trimmed = raw.trim();
+    let digits = trimmed.strip_suffix(['d', 'D']).unwrap_or(trimmed);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(SizeParseError(
+            "expected a number of days, such as 180 or 180d".into(),
+        ));
+    }
+    digits
+        .parse()
+        .map_err(|_| SizeParseError("day count is too large".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
