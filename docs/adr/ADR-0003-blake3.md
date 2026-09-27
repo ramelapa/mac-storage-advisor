@@ -1,6 +1,6 @@
 # ADR-0003: BLAKE3 for future content identity
 
-- Status: Accepted (not implemented)
+- Status: Accepted (implemented in v0.2)
 - Date: 2026-09-27
 
 ## Context
@@ -15,7 +15,7 @@ Use BLAKE3 for sample and full-file hashes in the duplicate pipeline described i
 
 - Hashing can stream, which matters for large files.
 - The algorithm is fixed before two implementations choose different hashes.
-- Until v0.2, the database has no hash columns and the scanner has no read path for contents.
+- The scanner still has no read path for contents. `crates/duplicates` streams BLAKE3 during `mac-storage duplicates`. Migration 002 stores the hashes.
 
 ## Alternatives considered
 

@@ -19,8 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mac-storage scan <PATH>` with `--json`, `--verbose`, `--quiet`, `--exclude`, `--threads`, and `--min-size`.
 - `--threads` is accepted and stored. Scanning in this version is single-threaded.
 - GitHub Actions workflow for `cargo fmt`, `cargo clippy -D warnings`, and `cargo test` on Ubuntu and macOS.
-- Architecture, safety, storage, filesystem, roadmap, and ADR documents. Duplicate detection is specified and not implemented.
+- Architecture, safety, storage, filesystem, roadmap, and ADR documents.
+- `mac-storage duplicates`: size groups, hard-link collapse, sample BLAKE3 (64 KiB), full BLAKE3, and optional `--verify` byte comparison. Zero-byte files are not reported. Redundant bytes do not multiply hard links and are not a free-space promise.
+- SQLite migration 002: `content_hashes`, `duplicate_groups`, `duplicate_members`.
+- `mac-storage large-files` and `mac-storage history`.
+- Decision: `--threads` stays recorded only. Scanning and hashing remain one thread (`SCAN_CONCURRENCY = 1`).
 
 ### Not in this version
 
-- Duplicate detection, content hashing, analyzers, recommendations, trends, history browsing, remediation, and the Tauri UI.
+- Analyzers, recommendations, trends, Trash, parallel scanning, and the Tauri UI.

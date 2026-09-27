@@ -1,17 +1,19 @@
 # Architecture
 
-Mac Storage Advisor is a local Rust workspace. This version scans a directory, records metadata, and prints a summary. It does not hash file contents, upload anything, or delete anything.
+Mac Storage Advisor is a local Rust workspace. `scan` records metadata. `duplicates` hashes regular files from a stored scan. Nothing is uploaded or deleted.
 
 ## System context
 
 ```mermaid
 flowchart TD
-    user[User] --> cli["mac-storage scan"]
+    user[User] --> cli["mac-storage scan, duplicates, large-files, history"]
     cli --> policy[Root policy and exclusions]
     policy --> walk["walkdir, single-threaded, follow_links false"]
     walk --> meta["symlink_metadata, no content reads"]
     meta --> snap[ScanSnapshot in memory]
     snap --> sqlite[(SQLite in the platform data dir)]
+    sqlite --> dup["duplicates: BLAKE3 over stored regular files"]
+    dup --> sqlite
     cli --> report[Human summary or JSON on stdout]
     snap --> report
     sqlite --> report
@@ -25,10 +27,11 @@ Logs go to stderr. They include scan start and finish with directory, file, byte
 | --- | --- | --- |
 | `mac-storage-common` | Display name, domain types, CLI-facing error | `serde`, `thiserror` |
 | `mac-storage-scanner` | Walk, exclusions, metadata | `common`, `walkdir`, `tracing` |
+| `mac-storage-duplicates` | Size, inode, and BLAKE3 grouping | `common`, `blake3` |
 | `mac-storage-storage` | SQLite open, migrations, save/load | `common`, `rusqlite`, `directories` |
-| `mac-storage` (`apps/cli`) | `scan` command and report formatting | all of the above, `clap`, `tracing-subscriber` |
+| `mac-storage` (`apps/cli`) | `scan`, `duplicates`, `large-files`, `history` | all of the above, `clap`, `tracing-subscriber` |
 
-`common` does not depend on the scanner or storage. The scanner does not depend on storage. Persistence is a CLI concern so the scanner can be tested without a database.
+`common` does not depend on the scanner, duplicates, or storage. The scanner does not depend on storage and does not read file contents. The duplicates crate does not depend on storage. The CLI loads rows, runs the pass, and writes hashes back.
 
 The display name is `PRODUCT_NAME` in `crates/common`. Binary and package names stay `mac-storage` / `mac-storage-*`.
 
@@ -42,7 +45,7 @@ The display name is `PRODUCT_NAME` in `crates/common`. Binary and package names 
 6. The snapshot is inserted in one SQLite transaction.
 7. The CLI prints the human summary or the `ScanReport` JSON.
 
-`--threads` is stored on the scan row. `SCAN_CONCURRENCY` is 1. The flag does not start a thread pool.
+`--threads` is stored on the scan row. `SCAN_CONCURRENCY` is 1. The flag does not start a thread pool. Hashing uses that same single thread. That decision is deferred rather than a pool in v0.2.
 
 ## Exclusion rules
 
@@ -67,10 +70,10 @@ The scan root itself is never dropped by the walk filter.
 
 ## Dependency rules
 
-- No network client. Paths, names, hashes, and contents are not uploaded. This version does not compute hashes.
+- No network client. Paths, names, hashes, and contents are not uploaded. Hashes are computed only by `duplicates`.
 - No `unsafe` in workspace crates (`forbid(unsafe_code)`).
 - `rusqlite` is built with the `bundled` feature so CI does not need a system SQLite.
-- `blake3`, `rayon`, `trash`, `notify`, and `tauri` are intentionally absent.
+- `blake3` is used by the duplicates crate. `rayon`, `trash`, `notify`, and `tauri` are still absent.
 
 ## Decisions
 

@@ -2,7 +2,7 @@
 
 Status values: Planned, In Progress, Done, Deferred, Experimental.
 
-Only rows with automated tests are Done. Duplicate detection is not started.
+Only rows with automated tests are Done. Duplicate detection, large files, and history landed in 0.2. Scanning and hashing stay one thread.
 
 | ID | Feature | Status | Release | Description |
 | --- | --- | --- | --- | --- |
@@ -16,11 +16,11 @@ Only rows with automated tests are Done. Duplicate detection is not started.
 | F-008 | CLI `scan` | Done | 0.1 | `mac-storage scan <PATH>` with human output: directories, files, logical bytes, errors, elapsed time. |
 | F-009 | JSON scan report | Done | 0.1 | `--json` prints a stable serde object with those fields plus error path and message. No file contents. |
 | F-010 | Minimum size filter | Done | 0.1 | `--min-size` still counts every regular file. Smaller files are omitted from persisted rows. |
-| F-011 | Duplicate detection | Planned | 0.2 | Size group, then inode/hard link, then sample BLAKE3, then full BLAKE3, then optional byte compare. Not implemented. |
-| F-012 | Content hashing | Planned | 0.2 | BLAKE3 streaming hashes. The crate is not a dependency yet. |
-| F-013 | Hard-link grouping | Planned | 0.2 | Inode and device are stored now. Grouping is not implemented. Logical bytes still count each path. |
-| F-014 | Large file report | Planned | 0.2 | List the largest files from a stored scan. |
-| F-015 | History command | Planned | 0.2 | Read previous scan rows. Persistence exists; the command does not. |
+| F-011 | Duplicate detection | Done | 0.2 | Size group, then inode/hard link, then sample BLAKE3, then full BLAKE3, then optional `--verify`. Tests cover identical files, distinct same-size files, and a missing path. |
+| F-012 | Content hashing | Done | 0.2 | Streaming BLAKE3. Sample window is 64 KiB. Unique sample hashes are not fully hashed. Contents are not stored. |
+| F-013 | Hard-link grouping | Done | 0.2 | Same `(device_id, inode)` is one content copy. Every path is listed. Redundant bytes do not multiply those paths. Scan `logical_bytes` still count each path. |
+| F-014 | Large file report | Done | 0.2 | `mac-storage large-files` lists the largest stored regular files. |
+| F-015 | History command | Done | 0.2 | `mac-storage history` reads previous scan rows, newest first. |
 | F-016 | Stale file analyzer | Planned | 0.3 | Surface old files using stored timestamps. No policy engine yet. |
 | F-017 | Downloads analyzer | Planned | 0.3 | Review typical download locations. Not implemented. |
 | F-018 | Developer artifact analyzer | Planned | 0.3 | `target`, `node_modules`, and similar build outputs. Exclusion by name works today; there is no analyzer. |
@@ -28,7 +28,7 @@ Only rows with automated tests are Done. Duplicate detection is not started.
 | F-020 | Storage trends | Planned | 0.3 | Compare logical and allocated totals across scans. |
 | F-021 | Tauri desktop UI | Planned | 0.3 | Share the Rust core. No UI crate in this workspace. |
 | F-022 | Move to Trash | Planned | 0.3 | Later remediation moves items to the OS Trash. Not implemented. |
-| F-023 | Parallel scanning | Planned | 0.2 | `--threads` is accepted and recorded. Execution is one thread. |
+| F-023 | Parallel scanning | Deferred | 0.2 | Decided: stay single-threaded. `--threads` is stored. `SCAN_CONCURRENCY` is 1 for scanning and hashing. No thread pool. |
 | F-024 | iCloud placeholder handling | Planned | 0.3 | Do not treat dataless files as reclaimable without an explicit model. Not implemented. |
 | F-025 | APFS clone awareness | Planned | 0.3 | Allocated size is `st_blocks * 512`, not unique physical usage. Clone sharing is not computed. |
 | F-026 | AI suggestions | Deferred | Future | Out of scope for the local deterministic core. |

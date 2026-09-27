@@ -1,6 +1,6 @@
 # Roadmap
 
-This commit is the scan foundation (v0.1). The product MVP is larger and is split across later releases. Duplicate detection is next and is not started.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. Analyzers and the desktop UI are still later.
 
 ## v0.1 — Foundation (this version)
 
@@ -20,12 +20,12 @@ The MVP is a local macOS app that explains where space went and can suggest movi
 
 ### v0.2
 
-- Duplicate detection stage 1: group persisted files by logical size
-- Stage 2: collapse hard links using inode and device
-- Stage 3: sample BLAKE3, then full BLAKE3, then optional byte-for-byte confirmation
+Done:
+
+- Duplicate detection: size group, then inode/hard link, then sample BLAKE3, then full BLAKE3, then optional byte comparison
 - Large-file listing from a stored scan
 - `history` command over existing scan rows
-- Decide whether `--threads` becomes a bounded pool or stays at one thread
+- `--threads` stays a recorded value. Execution remains one thread.
 
 ### v0.3
 

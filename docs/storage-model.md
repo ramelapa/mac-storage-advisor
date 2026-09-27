@@ -46,9 +46,17 @@ Foreign keys are enabled. Child rows reference `scans(id)` and cascade on delete
 
 Timestamps are Unix epoch milliseconds. SQLite integers are signed 64-bit. A value that does not fit is rejected for required counters and stored as NULL for optional inode or device ids.
 
-## Planned tables (not created)
+## Schema migration 002
 
-`content_hashes`, `duplicate_groups`, `duplicate_members`, `recommendations`, and `trend_points` wait until those features exist. They are not stubbed in migration 001.
+Opening a v0.1 database applies migration 2. `settings.schema_version` becomes `2`. The migration adds:
+
+- `content_hashes` — sample and full BLAKE3 for a file in one scan
+- `duplicate_groups` — logical size, full hash, redundant logical bytes
+- `duplicate_members` — file id and whether that path was the hard-link leader that was hashed
+
+`mac-storage duplicates` deletes and rewrites those rows for the chosen scan. It does not change `scans.logical_bytes`.
+
+`recommendations` and `trend_points` are still not created.
 
 ## Memory
 

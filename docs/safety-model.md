@@ -1,6 +1,6 @@
 # Safety model
 
-This version only scans. It does not delete, move, or trash files.
+This version scans and can hash a stored scan. It does not delete, move, or trash files.
 
 ## What this version does
 
@@ -8,13 +8,13 @@ This version only scans. It does not delete, move, or trash files.
 - Optionally `stat`s a symlink target only to see whether the link is broken. That does not list the target directory.
 - Writes a SQLite database of metadata under the platform data directory, or under `MAC_STORAGE_DB` / `--db`.
 - Prints a summary. `--json` includes error paths and messages.
+- `duplicates` opens regular files that a scan already stored, hashes them with BLAKE3, and can re-read them when `--verify` is set. The hash is stored. The bytes are not.
 
 ## What this version does not do
 
-- It does not open files to read contents.
-- It does not hash files.
+- `scan` does not open files to read contents.
 - It does not upload paths, names, hashes, or contents.
-- It does not follow symlinks during the walk.
+- It does not follow symlinks during the walk, and it does not hash a symlink as if it were the target.
 - It does not delete, rename, or move anything.
 - It has no Trash integration and no `rm` integration.
 

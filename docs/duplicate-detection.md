@@ -1,6 +1,6 @@
 # Duplicate detection
 
-**Status: not implemented.** No hash dependency is in the workspace. This document is the algorithm the v0.2 work should follow. Do not treat size groups as duplicates.
+**Status: implemented in v0.2.** `mac-storage duplicates` follows this pipeline. Do not treat size groups as duplicates. Zero-byte files are skipped. `--verify` is the optional byte comparison and is off unless requested.
 
 ## Goal
 
@@ -23,13 +23,15 @@ Report sets of regular files that have the same content, without reading more by
 - Hard links must not be presented as reclaiming `n * size` bytes.
 - The scanner in v0.1 does not read file contents. Hashing is a separate pass over paths already stored for a scan.
 
-## Storage (planned, not created)
+## Storage
 
-Future tables, not in migration 001:
+Migration 002 creates:
 
 - `content_hashes (scan_id, file_id, algorithm, sample_hash, full_hash, hashed_bytes)`
-- `duplicate_groups (scan_id, logical_size, full_hash)`
+- `duplicate_groups (scan_id, logical_size, full_hash, redundant_bytes)`
 - `duplicate_members (group_id, file_id, hard_link_leader)`
+
+Hard-link sets are derived from `files.device_id` and `files.inode` when the command runs. They are not a separate table. Re-running `duplicates` replaces hash and group rows for that scan. Scan totals are left unchanged.
 
 ## Out of scope
 

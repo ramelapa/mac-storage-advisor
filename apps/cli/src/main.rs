@@ -1,7 +1,8 @@
-//! `mac-storage` command line. This version implements `scan` only.
+//! `mac-storage` command line.
 
 #![forbid(unsafe_code)]
 
+mod query;
 mod report;
 mod size;
 
@@ -19,17 +20,22 @@ use mac_storage_storage::{resolve_db_path, Database};
     version,
     about = PRODUCT_NAME,
     after_long_help = "\
-Local, non-destructive storage scan. This version records filesystem metadata only. It does not hash, upload, or delete anything.
+Local, non-destructive storage inventory. `scan` records metadata and does not read file contents.
+`duplicates` hashes stored regular files locally with BLAKE3. Hashes stay in the local database.
+Nothing is uploaded or deleted. Redundant bytes are not a promise of free disk space.
 
 Examples:
   mac-storage scan ~/Downloads
   mac-storage scan ~/Downloads --json
-  mac-storage scan ~/Developer --exclude target --exclude node_modules --min-size 1MiB
+  mac-storage duplicates
+  mac-storage duplicates --verify --json
+  mac-storage large-files --limit 20
+  mac-storage history
 
 Planned commands (not implemented):
-  duplicates, large-files, developer, report, history, recommendations, doctor
+  developer, report, recommendations, doctor
 
---threads is accepted and stored. Scanning runs on one thread.
+--threads is accepted and stored. Scanning and hashing run on one thread.
 Exclusions: a name (node_modules), a path prefix (sub/dir or /abs/path), or a glob
 (*.dmg, Downloads/*.dmg, **/*.log). See docs/architecture.md.
 Protected macOS prefixes (/System, /private, /bin, /sbin, /usr, /Library) are skipped
@@ -46,6 +52,12 @@ struct Cli {
 enum Command {
     /// Recursively scan a directory and store metadata in the local database.
     Scan(ScanArgs),
+    /// Group identical file contents from a stored scan. Does not delete anything.
+    Duplicates(query::DuplicatesArgs),
+    /// List the largest regular files from a stored scan.
+    LargeFiles(query::LargeArgs),
+    /// List scans already stored in the local database.
+    History(query::HistoryArgs),
 }
 
 #[derive(Debug, Args)]
@@ -104,6 +116,9 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), Error> {
     match cli.command {
         Command::Scan(args) => scan_command(args),
+        Command::Duplicates(args) => query::duplicates_command(args),
+        Command::LargeFiles(args) => query::large_files_command(args),
+        Command::History(args) => query::history_command(args),
     }
 }
 
@@ -139,7 +154,7 @@ fn scan_command(args: ScanArgs) -> Result<(), Error> {
     Ok(())
 }
 
-fn init_tracing(verbose: bool, quiet: bool, json: bool) {
+pub(crate) fn init_tracing(verbose: bool, quiet: bool, json: bool) {
     let default_level = if verbose {
         "debug"
     } else if quiet || json {

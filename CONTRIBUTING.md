@@ -22,7 +22,7 @@ Use synthetic directories under the process temp dir. Do not point tests at a ho
 
 ## Scope of this repository
 
-The scan foundation is implemented. Duplicate detection, analyzers, recommendations, Trash, and the desktop UI are specified in `docs/` and are not implemented. Do not add those dependencies (`blake3`, `trash`, `notify`, `tauri`, `rayon`) until the roadmap item is actually being built.
+Scan, duplicate grouping, large-file listing, and history are implemented. Analyzers, recommendations, Trash, and the desktop UI are specified in `docs/` and are not implemented. `blake3` is already a dependency of `crates/duplicates`. Do not add `trash`, `notify`, `tauri`, or `rayon` until that roadmap item is actually being built.
 
 Do not add a permanent-delete API. See [docs/safety-model.md](docs/safety-model.md).
 

@@ -1,8 +1,8 @@
 # Mac Storage Advisor
 
-Local, non-destructive scan of a directory on macOS. This repository is the v0.1 foundation: it walks a tree, records metadata in SQLite, and prints a summary. The display name is a placeholder (`PRODUCT_NAME` in `crates/common`). Crate and binary names stay `mac-storage`.
+Local, non-destructive inventory of a directory on macOS. `scan` walks a tree and records metadata in SQLite. `duplicates` then hashes those regular files locally. The display name is a placeholder (`PRODUCT_NAME` in `crates/common`). Crate and binary names stay `mac-storage`.
 
-It does not hash files, upload anything, or delete anything. Duplicate detection is specified and not implemented.
+Nothing is uploaded or deleted. Duplicate groups report extra content copies. That number is not bytes the disk will free.
 
 ## What works now
 
@@ -14,16 +14,19 @@ It does not hash files, upload anything, or delete anything. Duplicate detection
 - Permission errors and missing entries are recorded. The scan continues.
 - Results are stored in SQLite (migrations included).
 - `--json` prints a stable summary plus error path and message. File contents are not included.
+- `mac-storage duplicates` groups identical regular files from a stored scan (size, then inode, then sample BLAKE3, then full BLAKE3). `--verify` re-reads candidates.
+- `mac-storage large-files` lists the largest stored regular files.
+- `mac-storage history` lists previous scans.
 
 ## Planned
 
-Duplicates, large and stale files, Downloads and developer-artifact reviews, recommendations, trends, a history command, move-to-Trash, and a Tauri UI. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
+Stale files, Downloads and developer-artifact reviews, recommendations, trends, move-to-Trash, and a Tauri UI. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
 
 Not in the MVP: AI suggestions, cloud sync, cross-device inventory, automatic or permanent deletion, photo/video similarity, semantic duplicates, and Windows or Linux as packaged products.
 
 ## Safety
 
-The tool reads directory listings and metadata. It does not open file contents. Permanent delete will not exist. A later release may move user-confirmed paths to Trash. Details: [docs/safety-model.md](docs/safety-model.md).
+`scan` reads directory listings and metadata. `duplicates` opens file contents only to hash them on this machine. Permanent delete will not exist. A later release may move user-confirmed paths to Trash. Details: [docs/safety-model.md](docs/safety-model.md).
 
 Protected prefixes `/System`, `/private`, `/bin`, `/sbin`, `/usr`, and `/Library` are skipped only when they fall inside the scan root (for example when the root is `/`). Passing `~/Downloads` scans that folder. Passing exactly `/usr` is refused unless `--allow-protected-roots` is set. An explicit root under a prefix, such as `/usr/local/myproject`, is scanned.
 
@@ -33,6 +36,7 @@ Protected prefixes `/System`, `/private`, `/bin`, `/sbin`, `/usr`, and `/Library
 | --- | --- |
 | `crates/common` | Domain types and the product name |
 | `crates/scanner` | `walkdir` scan, exclusions, metadata |
+| `crates/duplicates` | BLAKE3 duplicate grouping over stored regular files |
 | `crates/storage` | SQLite via `rusqlite` (bundled) and migrations |
 | `apps/cli` | `mac-storage` binary |
 
@@ -61,6 +65,10 @@ The database defaults to this app's own data directory and does not replace any 
 mac-storage scan <PATH>
 mac-storage scan <PATH> --json
 mac-storage scan <PATH> --exclude node_modules --exclude target --min-size 1MiB
+mac-storage duplicates
+mac-storage duplicates --verify --json
+mac-storage large-files --limit 20
+mac-storage history
 ```
 
 | Flag | Behavior |
@@ -69,7 +77,7 @@ mac-storage scan <PATH> --exclude node_modules --exclude target --min-size 1MiB
 | `--verbose` | Debug logs on stderr. Paths and sizes only, never contents. |
 | `--quiet` | No human summary and no info logs. |
 | `--exclude` | Repeatable. Name, prefix, or glob. See below. |
-| `--threads` | Accepted and stored. Scanning uses one thread. |
+| `--threads` | Accepted and stored on `scan`. Scanning and hashing use one thread. |
 | `--min-size` | Bytes, or `K`/`KB`/`KiB`/`M`/`MiB`/`G`/`GiB`/`T`/`TiB`. Every regular file is still counted. Files below the threshold are not persisted. |
 | `--redact-paths` | Redact paths in logs. JSON and SQLite still store them. |
 | `--db` | SQLite file. Overrides `MAC_STORAGE_DB`. |
@@ -84,7 +92,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -116,7 +124,9 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 - `--exclude 'Downloads/*.dmg'` matches that suffix, not files in a nested folder.
 - `--exclude '/tmp/**/*.txt'` is an absolute glob.
 
-Help text lists planned commands that are not implemented: `duplicates`, `large-files`, `developer`, `report`, `history`, `recommendations`, `doctor`.
+`duplicates`, `large-files`, and `history` read the newest scan unless `--scan ID` is set. They exit 1 when the database has no scans. Hash errors are listed and do not abort the rest of the group. Help text still names planned commands that are not implemented: `developer`, `report`, `recommendations`, `doctor`.
+
+`duplicates --json` includes `duplicate_groups`, `hard_link_sets`, and `hash_errors`. File bytes are not in that object. `redundant_bytes` counts extra content copies after hard links are collapsed. Zero-byte files are not reported as duplicates.
 
 ## Development
 
@@ -130,7 +140,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.1 scan foundation. Feature status is authoritative in [docs/features.md](docs/features.md). Duplicate detection is the next implementation step (size grouping) and has not been started.
+v0.2 adds duplicate grouping, large-file listing, and scan history on top of the v0.1 scan. Feature status is authoritative in [docs/features.md](docs/features.md). Analyzers, recommendations, Trash, and the desktop UI are still later work. `--threads` stays single-threaded.
 
 ## Limitations
 

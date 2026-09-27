@@ -15,7 +15,10 @@ use mac_storage_common::{
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/001_init.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/001_init.sql")),
+    (2, include_str!("../migrations/002_duplicates.sql")),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -31,6 +34,8 @@ pub enum StorageError {
     ValueOutOfRange { value: u64 },
     #[error("scan {0} was not found")]
     NotFound(i64),
+    #[error("no scans are stored yet; run `mac-storage scan <PATH>` first")]
+    NoScans,
     #[error("stored scan status is invalid: {0}")]
     InvalidStatus(String),
     #[error("stored file type is invalid: {0}")]
@@ -41,6 +46,62 @@ pub enum StorageError {
 
 pub struct Database {
     conn: Connection,
+}
+
+/// A file row plus its SQLite id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredFile {
+    pub id: i64,
+    pub record: FileRecord,
+}
+
+/// One previous scan, without its file rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanSummary {
+    pub id: i64,
+    pub root: PathBuf,
+    pub started_at: SystemTime,
+    pub finished_at: SystemTime,
+    pub status: ScanStatus,
+    pub directories_scanned: u64,
+    pub files_scanned: u64,
+    pub logical_bytes: u64,
+    pub error_count: u64,
+    pub elapsed_ms: u64,
+}
+
+/// Hash row written by the duplicate pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewContentHash {
+    pub file_id: i64,
+    pub algorithm: String,
+    pub sample_hash: Option<String>,
+    pub full_hash: Option<String>,
+    pub hashed_bytes: u64,
+}
+
+/// Duplicate group to insert. Member file ids must already exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewDuplicateGroup {
+    pub logical_size: u64,
+    pub full_hash: String,
+    pub redundant_bytes: u64,
+    pub members: Vec<NewDuplicateMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewDuplicateMember {
+    pub file_id: i64,
+    pub hard_link_leader: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredDuplicateGroup {
+    pub id: i64,
+    pub logical_size: u64,
+    pub full_hash: String,
+    pub redundant_bytes: u64,
+    pub members: Vec<NewDuplicateMember>,
 }
 
 /// Header plus rows loaded back from SQLite.
@@ -165,7 +226,7 @@ impl Database {
             params![PRODUCT_NAME],
         )?;
         self.conn.execute(
-            "INSERT INTO settings(key, value) VALUES ('schema_version', '1')
+            "INSERT INTO settings(key, value) VALUES ('schema_version', '2')
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [],
         )?;
@@ -208,6 +269,239 @@ impl Database {
             errors,
             exclusions,
         })
+    }
+
+    /// Use `requested` when the caller passed `--scan`. Otherwise the newest row.
+    pub fn resolve_scan_id(&self, requested: Option<i64>) -> Result<i64, StorageError> {
+        if let Some(id) = requested {
+            let exists: Option<i64> = self
+                .conn
+                .query_row("SELECT id FROM scans WHERE id = ?1", params![id], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            return exists.map(|_| id).ok_or(StorageError::NotFound(id));
+        }
+        self.conn
+            .query_row("SELECT id FROM scans ORDER BY id DESC LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .ok_or(StorageError::NoScans)
+    }
+
+    pub fn scan_root(&self, id: i64) -> Result<PathBuf, StorageError> {
+        let root: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT root_path FROM scans WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        root.map(PathBuf::from).ok_or(StorageError::NotFound(id))
+    }
+
+    pub fn list_scans(&self, limit: u64) -> Result<Vec<ScanSummary>, StorageError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, root_path, started_at, finished_at, status,
+                    directories_scanned, files_scanned, logical_bytes, error_count, elapsed_ms
+             FROM scans ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![req_i64(limit)?], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })?;
+        let mut scans = Vec::new();
+        for row in rows {
+            let (
+                id,
+                root,
+                started,
+                finished,
+                status_raw,
+                directories,
+                files,
+                logical,
+                errors,
+                elapsed,
+            ) = row?;
+            let status = ScanStatus::from_db(&status_raw)
+                .ok_or_else(|| StorageError::InvalidStatus(status_raw))?;
+            scans.push(ScanSummary {
+                id,
+                root: PathBuf::from(root),
+                started_at: millis_to_time(Some(started)).unwrap_or(UNIX_EPOCH),
+                finished_at: millis_to_time(Some(finished)).unwrap_or(UNIX_EPOCH),
+                status,
+                directories_scanned: row_u64_value(directories)?,
+                files_scanned: row_u64_value(files)?,
+                logical_bytes: row_u64_value(logical)?,
+                error_count: row_u64_value(errors)?,
+                elapsed_ms: row_u64_value(elapsed)?,
+            });
+        }
+        Ok(scans)
+    }
+
+    pub fn list_regular_files(&self, scan_id: i64) -> Result<Vec<StoredFile>, StorageError> {
+        self.scan_root(scan_id)?;
+        self.query_files(
+            "SELECT id, path, filename, extension, logical_size, allocated_size,
+                    created_time, modified_time, accessed_time, inode, device_id,
+                    permissions, file_type, is_symlink, is_broken_symlink, link_target
+             FROM files
+             WHERE scan_id = ?1 AND file_type = 'file' AND is_symlink = 0
+             ORDER BY path",
+            params![scan_id],
+        )
+    }
+
+    pub fn largest_files(
+        &self,
+        scan_id: i64,
+        limit: u64,
+        min_logical_size: u64,
+    ) -> Result<Vec<StoredFile>, StorageError> {
+        self.scan_root(scan_id)?;
+        self.query_files(
+            "SELECT id, path, filename, extension, logical_size, allocated_size,
+                    created_time, modified_time, accessed_time, inode, device_id,
+                    permissions, file_type, is_symlink, is_broken_symlink, link_target
+             FROM files
+             WHERE scan_id = ?1 AND file_type = 'file' AND is_symlink = 0
+               AND logical_size >= ?2
+             ORDER BY logical_size DESC, path ASC
+             LIMIT ?3",
+            params![scan_id, req_i64(min_logical_size)?, req_i64(limit)?],
+        )
+    }
+
+    /// Replace hash and duplicate-group rows for one scan. File rows stay put.
+    pub fn replace_duplicate_result(
+        &mut self,
+        scan_id: i64,
+        hashes: &[NewContentHash],
+        groups: &[NewDuplicateGroup],
+    ) -> Result<(), StorageError> {
+        self.scan_root(scan_id)?;
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "DELETE FROM duplicate_groups WHERE scan_id = ?1",
+            params![scan_id],
+        )?;
+        tx.execute(
+            "DELETE FROM content_hashes WHERE scan_id = ?1",
+            params![scan_id],
+        )?;
+        for hash in hashes {
+            tx.execute(
+                "INSERT INTO content_hashes (
+                    scan_id, file_id, algorithm, sample_hash, full_hash, hashed_bytes
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    scan_id,
+                    hash.file_id,
+                    hash.algorithm,
+                    hash.sample_hash,
+                    hash.full_hash,
+                    req_i64(hash.hashed_bytes)?,
+                ],
+            )?;
+        }
+        for group in groups {
+            tx.execute(
+                "INSERT INTO duplicate_groups (scan_id, logical_size, full_hash, redundant_bytes)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    scan_id,
+                    req_i64(group.logical_size)?,
+                    group.full_hash,
+                    req_i64(group.redundant_bytes)?,
+                ],
+            )?;
+            let group_id = tx.last_insert_rowid();
+            for member in &group.members {
+                tx.execute(
+                    "INSERT INTO duplicate_members (group_id, file_id, hard_link_leader)
+                     VALUES (?1, ?2, ?3)",
+                    params![group_id, member.file_id, i64::from(member.hard_link_leader)],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn load_duplicate_groups(
+        &self,
+        scan_id: i64,
+    ) -> Result<Vec<StoredDuplicateGroup>, StorageError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, logical_size, full_hash, redundant_bytes
+             FROM duplicate_groups WHERE scan_id = ?1 ORDER BY logical_size DESC, full_hash",
+        )?;
+        let rows = stmt.query_map(params![scan_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut groups = Vec::new();
+        for row in rows {
+            let (id, logical_size, full_hash, redundant_bytes) = row?;
+            groups.push(StoredDuplicateGroup {
+                id,
+                logical_size: row_u64_value(logical_size)?,
+                full_hash,
+                redundant_bytes: row_u64_value(redundant_bytes)?,
+                members: Vec::new(),
+            });
+        }
+        drop(stmt);
+        for group in &mut groups {
+            let mut stmt = self.conn.prepare(
+                "SELECT file_id, hard_link_leader FROM duplicate_members
+                 WHERE group_id = ?1 ORDER BY file_id",
+            )?;
+            let members = stmt.query_map(params![group.id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            for member in members {
+                let (file_id, leader) = member?;
+                group.members.push(NewDuplicateMember {
+                    file_id,
+                    hard_link_leader: leader != 0,
+                });
+            }
+        }
+        Ok(groups)
+    }
+
+    fn query_files(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<StoredFile>, StorageError> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let mut rows = stmt.query(params)?;
+        let mut files = Vec::new();
+        while let Some(row) = rows.next()? {
+            files.push(stored_file_from_row(row)?);
+        }
+        Ok(files)
     }
 }
 
@@ -492,6 +786,33 @@ fn load_exclusions(conn: &Connection, scan_id: i64) -> Result<Vec<String>, Stora
     Ok(patterns)
 }
 
+fn stored_file_from_row(row: &rusqlite::Row<'_>) -> Result<StoredFile, StorageError> {
+    let kind_raw: String = row.get(12)?;
+    let kind =
+        FileKind::from_db(&kind_raw).ok_or_else(|| StorageError::InvalidFileType(kind_raw))?;
+    let link: Option<String> = row.get(15)?;
+    Ok(StoredFile {
+        id: row.get(0)?,
+        record: FileRecord {
+            path: PathBuf::from(row.get::<_, String>(1)?),
+            filename: row.get(2)?,
+            extension: row.get(3)?,
+            logical_size: row_u64(row, 4)?,
+            allocated_size: opt_u64(row.get(5)?)?,
+            created: millis_to_time(row.get(6)?),
+            modified: millis_to_time(row.get(7)?),
+            accessed: millis_to_time(row.get(8)?),
+            inode: opt_u64(row.get(9)?)?,
+            device_id: opt_u64(row.get(10)?)?,
+            permissions: opt_u32(row.get(11)?)?,
+            kind,
+            is_symlink: row.get::<_, i64>(13)? != 0,
+            is_broken_symlink: row.get::<_, i64>(14)? != 0,
+            link_target: link.map(PathBuf::from),
+        },
+    })
+}
+
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -506,6 +827,10 @@ fn opt_fit(value: Option<u64>) -> Option<i64> {
 
 fn row_u64(row: &rusqlite::Row<'_>, idx: usize) -> Result<u64, StorageError> {
     let value: i64 = row.get(idx)?;
+    row_u64_value(value)
+}
+
+fn row_u64_value(value: i64) -> Result<u64, StorageError> {
     u64::try_from(value).map_err(|_| StorageError::ValueOutOfRange { value: u64::MAX })
 }
 
@@ -686,7 +1011,7 @@ mod tests {
             db.setting("product_name").unwrap().as_deref(),
             Some(PRODUCT_NAME)
         );
-        assert_eq!(db.setting("schema_version").unwrap().as_deref(), Some("1"));
+        assert_eq!(db.setting("schema_version").unwrap().as_deref(), Some("2"));
 
         let snap = sample_snapshot();
         let scan = db.save_scan(&snap).unwrap();
@@ -807,5 +1132,107 @@ mod tests {
         let default_path = resolve_db_path_from(None, Some("")).unwrap();
         assert!(default_path.ends_with("mac-storage.sqlite"));
         assert!(resolve_db_path_from(Some(Path::new("")), None).is_err());
+    }
+
+    #[test]
+    fn history_largest_files_and_duplicate_rows_round_trip() {
+        let mut db = Database::open_in_memory().unwrap();
+        let version: i64 = db
+            .conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 2);
+        assert!(matches!(
+            db.resolve_scan_id(None).unwrap_err(),
+            StorageError::NoScans
+        ));
+
+        let mut older = sample_snapshot();
+        older.root = PathBuf::from("/tmp/older");
+        let mut newer = sample_snapshot();
+        newer.files.push(FileRecord {
+            path: PathBuf::from("/tmp/fixture/big.bin"),
+            filename: "big.bin".into(),
+            extension: Some("bin".into()),
+            logical_size: 50,
+            allocated_size: Some(4096),
+            created: None,
+            modified: None,
+            accessed: None,
+            inode: Some(99),
+            device_id: Some(7),
+            permissions: Some(0o644),
+            kind: FileKind::File,
+            is_symlink: false,
+            is_broken_symlink: false,
+            link_target: None,
+        });
+        newer.statistics.files_scanned = 3;
+        newer.statistics.logical_bytes = 61;
+        let older_id = db.save_scan(&older).unwrap().id;
+        let newer_id = db.save_scan(&newer).unwrap().id;
+        assert_eq!(db.resolve_scan_id(None).unwrap(), newer_id);
+        assert_eq!(db.resolve_scan_id(Some(older_id)).unwrap(), older_id);
+        assert!(matches!(
+            db.resolve_scan_id(Some(99)).unwrap_err(),
+            StorageError::NotFound(99)
+        ));
+
+        let history = db.list_scans(10).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].id, newer_id);
+        assert_eq!(history[0].logical_bytes, 61);
+        assert_eq!(history[1].root, PathBuf::from("/tmp/older"));
+
+        let regular = db.list_regular_files(newer_id).unwrap();
+        assert_eq!(regular.len(), 2);
+        assert!(regular.iter().all(|file| !file.record.is_symlink));
+        let largest = db.largest_files(newer_id, 1, 0).unwrap();
+        assert_eq!(largest.len(), 1);
+        assert_eq!(largest[0].record.filename, "big.bin");
+
+        let notes_id = regular
+            .iter()
+            .find(|file| file.record.filename == "notes.txt")
+            .unwrap()
+            .id;
+        let big_id = largest[0].id;
+        db.replace_duplicate_result(
+            newer_id,
+            &[NewContentHash {
+                file_id: notes_id,
+                algorithm: "blake3".into(),
+                sample_hash: Some("abc".into()),
+                full_hash: Some("def".into()),
+                hashed_bytes: 11,
+            }],
+            &[NewDuplicateGroup {
+                logical_size: 11,
+                full_hash: "def".into(),
+                redundant_bytes: 11,
+                members: vec![
+                    NewDuplicateMember {
+                        file_id: notes_id,
+                        hard_link_leader: true,
+                    },
+                    NewDuplicateMember {
+                        file_id: big_id,
+                        hard_link_leader: true,
+                    },
+                ],
+            }],
+        )
+        .unwrap();
+        let loaded = db.load_duplicate_groups(newer_id).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].redundant_bytes, 11);
+        assert_eq!(loaded[0].members.len(), 2);
+        let after = db.load_scan(newer_id).unwrap();
+        assert_eq!(after.scan.statistics.logical_bytes, 61);
+
+        db.replace_duplicate_result(newer_id, &[], &[]).unwrap();
+        assert!(db.load_duplicate_groups(newer_id).unwrap().is_empty());
     }
 }
