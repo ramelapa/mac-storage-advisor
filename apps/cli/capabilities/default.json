@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The window loads the local page. It has no extra native permissions.",
+  "windows": ["main"],
+  "permissions": []
+}

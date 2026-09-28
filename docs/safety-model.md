@@ -11,6 +11,8 @@ This version scans, hashes, and can move a user-confirmed path to the OS Trash. 
 - `duplicates` opens regular files that a scan already stored, hashes them with BLAKE3, and can re-read them when `--verify` is set. The hash is stored. The bytes are not.
 - `analyze` and `recommendations` read stored metadata and duplicate groups. They print suggestions. They do not move files.
 - `mac-storage ui` serves that same behavior on `127.0.0.1`. The page's command box only accepts advisor verbs. It does not invoke a shell.
+- `mac-storage window` opens that page in a native window. The listener is still `127.0.0.1`.
+- `doctor` reads the database and prints a check. It does not move files.
 - `trash` moves a path to the operating-system Trash when the confirmation phrase is exactly `move to trash`. Without that phrase, nothing is moved.
 
 ## What this version does not do

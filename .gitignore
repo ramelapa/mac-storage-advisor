@@ -1,4 +1,5 @@
 /target
+apps/cli/gen/
 **/*.sqlite
 **/*.sqlite-journal
 **/*.sqlite-wal

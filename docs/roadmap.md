@@ -1,6 +1,6 @@
 # Roadmap
 
-v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. A Tauri window is still later.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window.
 
 ## v0.1 — Foundation (this version)
 
@@ -50,9 +50,12 @@ Done:
 - Allocated-below-logical gaps are reported and are not called reclaimable space
 - `mac-storage trash` moves named paths to the OS Trash only after the phrase `move to trash`
 
-Still planned:
+### v0.6
 
-- Tauri window on the same Rust core
+Done:
+
+- `mac-storage doctor` checks product identity, schema version, and SQLite integrity, and lists recent Trash moves
+- `mac-storage window` opens the existing local page in a Tauri window on `127.0.0.1`
 
 ## Future / Deferred
 

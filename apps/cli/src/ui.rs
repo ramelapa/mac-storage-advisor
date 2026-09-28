@@ -123,6 +123,7 @@ enum PageCommand {
         paths: Vec<PathBuf>,
         confirm: Option<String>,
     },
+    Doctor,
 }
 
 struct ParsedCommand {
@@ -252,6 +253,7 @@ fn dispatch(app: &App, method: &str, url: &str, host: Option<&str>, body: &[u8])
         ("GET", "/api/trends") => trends(app, &query),
         ("POST", "/api/scan") => scan(app, body),
         ("POST", "/api/duplicates") => duplicates(app, body),
+        ("GET", "/api/doctor") => doctor(app),
         ("POST", "/api/trash") => trash(app, body),
         ("POST", "/api/command") => command(app, body),
         _ => Err(Error::Usage("unknown request".into())),
@@ -358,6 +360,10 @@ fn duplicates(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
     )?)
 }
 
+fn doctor(app: &App) -> Result<Vec<u8>, Error> {
+    to_json(&crate::doctor::run_doctor(Some(app.database.as_path()))?)
+}
+
 fn trash(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
     let request: TrashBody = parse_json(body)?;
     let confirmation = request
@@ -455,6 +461,16 @@ fn execute(app: &App, parsed: ParsedCommand) -> Result<CommandResult, Error> {
             };
             Ok(CommandResult { text, scan_id })
         }
+        PageCommand::Doctor => {
+            let report = crate::doctor::run_doctor(db)?;
+            let scan_id = report.newest_scan.as_ref().map(|scan| scan.id);
+            let text = if parsed.json {
+                pretty(&report)?
+            } else {
+                crate::doctor::format_doctor(&report)
+            };
+            Ok(CommandResult { text, scan_id })
+        }
     }
 }
 
@@ -496,6 +512,7 @@ Mac Storage Advisor page commands (not a system shell):
   recommendations [--scan ID] [--older-than DAYS] [--json]
   trends [--limit N] [--json]
   trash --path PATH [--path PATH] [--scan ID] [--confirm PHRASE] [--json]
+  doctor [--json]
 
 A leading ~/ is your home directory. Pipes, semicolons, and other programs are refused.
 trash moves a path only when --confirm is exactly: move to trash. Otherwise nothing is moved.
@@ -659,6 +676,10 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
                 paths: trash_paths,
                 confirm,
             }
+        }
+        "doctor" => {
+            reject_positionals(verb, &positionals)?;
+            PageCommand::Doctor
         }
         "rm" | "sh" | "bash" | "zsh" | "sudo" => {
             return Err(Error::Usage(format!(

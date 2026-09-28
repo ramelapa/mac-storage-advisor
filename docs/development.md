@@ -20,6 +20,8 @@ cargo run -p mac-storage -- trends
 cargo run -p mac-storage -- ui --port 47231
 cargo run -p mac-storage -- trash --path /path/to/file
 cargo run -p mac-storage -- trash --path /path/to/file --confirm "move to trash"
+cargo run -p mac-storage -- doctor
+cargo run -p mac-storage -- window
 ```
 
 `cargo audit` is not part of CI. Run it locally if you want advisory output. Do not fail a release on an advisory that cannot be fixed without abandoning a required crate.

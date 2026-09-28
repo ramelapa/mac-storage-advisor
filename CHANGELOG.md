@@ -29,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS `SF_DATALESS` is stored. Placeholder files are left out of stale and Downloads totals, and Trash refuses them.
 - Files whose allocated size is below their logical size are reported as a sparse, compressed, or shared-extent gap. That gap is not reclaimable space, and clone groups are not inferred.
 - `mac-storage trash` moves named paths from a stored scan to the OS Trash only when `--confirm` is exactly `move to trash`. Without that phrase, nothing is moved.
+- `mac-storage doctor` checks product identity, schema version, and SQLite integrity. It lists recent Trash moves. A file that is not this app's database is left unchanged.
+- `mac-storage window` opens the existing local page in a Tauri window. The listener remains `127.0.0.1`.
 
 ### Not in this version
 
-- A Tauri window, parallel scanning, and APFS clone grouping. Permanent delete will not exist.
+- Parallel scanning and APFS clone grouping. Permanent delete will not exist.

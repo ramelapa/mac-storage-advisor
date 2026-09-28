@@ -2,7 +2,7 @@
 
 Status values: Planned, In Progress, Done, Deferred, Experimental.
 
-Only rows with automated tests are Done. v0.5 records iCloud placeholders, flags allocated-size gaps, and can move a confirmed path to Trash. Scanning and hashing stay one thread. A Tauri window is still planned.
+Only rows with automated tests are Done. v0.6 checks the local database and opens the same page in a native window. Scanning and hashing stay one thread.
 
 | ID | Feature | Status | Release | Description |
 | --- | --- | --- | --- | --- |
@@ -26,7 +26,7 @@ Only rows with automated tests are Done. v0.5 records iCloud placeholders, flags
 | F-018 | Developer artifact analyzer | Done | 0.3 | Rolls up `node_modules`, `target`, `.venv`, `site-packages`, and similar directories. The earliest matching component wins. |
 | F-019 | Recommendation engine | Done | 0.3 | Suggestions only. Document duplicates stay separate from package-metadata duplicates and `~$` lock files. Nothing is deleted. |
 | F-020 | Storage trends | Done | 0.3 | Compare logical and allocated totals across scans of the same root. Different folders are not subtracted. |
-| F-021 | Tauri desktop UI | Planned | 0.3 | A native window is still later. The localhost page is F-036. |
+| F-021 | Tauri desktop UI | Done | 0.6 | `mac-storage window` opens the existing local page in a Tauri window. The page still talks only to `127.0.0.1`. There is no second frontend. |
 | F-022 | Move to Trash | Done | 0.5 | `mac-storage trash` moves a named, inventoried path to the OS Trash only when `--confirm` is exactly `move to trash`. Protected paths, the scan root, unknown paths, and iCloud placeholders are refused. A symlink is moved as a link; its target stays. |
 | F-023 | Parallel scanning | Deferred | 0.2 | Decided: stay single-threaded. `--threads` is stored. `SCAN_CONCURRENCY` is 1 for scanning and hashing. No thread pool. |
 | F-024 | iCloud placeholder handling | Done | 0.5 | macOS `SF_DATALESS` is stored. Those files are left out of the stale and Downloads tallies. Their logical size is not treated as local disk usage, and Trash refuses them. |
@@ -42,3 +42,4 @@ Only rows with automated tests are Done. v0.5 records iCloud placeholders, flags
 | F-034 | Linux product | Deferred | Future | Tests run on Linux. Packaged support is macOS. |
 | F-035 | Filesystem watcher | Deferred | Future | `notify` is not a dependency. |
 | F-036 | Local interactive UI | Done | 0.4 | `mac-storage ui` listens on `127.0.0.1` and shows scan, duplicate, large-file, suggestion, and trend results. The page also runs the command-line verbs. It does not upload or delete files. |
+| F-037 | Database check | Done | 0.6 | `mac-storage doctor` confirms the file is this app's database, the schema matches, and SQLite's integrity check passes. It lists recent Trash moves. It does not change user files. A foreign database is left untouched. |

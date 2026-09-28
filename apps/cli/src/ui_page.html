@@ -224,6 +224,13 @@
         <div id="advice-body"><p class="empty">Suggestions only. Nothing is moved or deleted.</p></div>
       </section>
 
+      <section class="panel" id="doctor-panel">
+        <h2>Database check</h2>
+        <p class="note">Confirms this file belongs to Mac Storage Advisor, the schema matches, and SQLite's integrity check passes. It also lists paths already moved to Trash. It does not change files.</p>
+        <button type="button" id="run-doctor" class="primary">Check database</button>
+        <div id="doctor-body"><p class="empty">No check yet.</p></div>
+      </section>
+
       <section class="panel" id="trash-panel">
         <h2>Move to Trash</h2>
         <p class="note">Name paths from this scan. Nothing moves until the confirmation box says <span class="path">move to trash</span>. iCloud placeholders are refused. This is the operating-system Trash, not a permanent delete.</p>
@@ -326,7 +333,8 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         "mac-storage analyze" + db,
         "mac-storage recommendations" + db,
         "mac-storage trends" + db,
-        "mac-storage trash --path PATH" + db
+        "mac-storage trash --path PATH" + db,
+        "mac-storage doctor" + db
       ];
       $("cli-equivalents").textContent = "From a terminal:\n" + lines.join("\n");
     }
@@ -618,6 +626,34 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       for (const path of report.moved || []) host.append(el("p", "path", "Moved " + path));
       if (report.failed) host.append(el("p", "banner", report.failed.path + ": " + report.failed.reason));
     }
+
+    function renderDoctor(report) {
+      const host = $("doctor-body");
+      host.replaceChildren();
+      host.append(el("p", "note", report.healthy ? "Healthy." : "Check failed."));
+      const list = el("ul");
+      for (const item of report.checks || []) {
+        list.append(el("li", "path", item.status + " — " + item.detail));
+      }
+      host.append(list);
+      for (const event of report.recent_trash || []) {
+        host.append(el("p", "path", "Trash log, scan " + event.scan_id + ": " + event.path));
+      }
+    }
+
+    $("run-doctor").addEventListener("click", async () => {
+      const button = $("run-doctor");
+      button.disabled = true;
+      try {
+        const report = await api("GET", "/api/doctor");
+        renderDoctor(report);
+        setBanner(report.healthy ? "Database check passed." : "Database check failed.", report.healthy);
+      } catch (err) {
+        setBanner(err.message, false);
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     $("trash-preview").addEventListener("click", async () => {
       try {

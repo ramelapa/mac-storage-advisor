@@ -21,9 +21,14 @@ mac-storage-scanner = { workspace = true }
 mac-storage-storage = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tauri = { workspace = true }
 tiny_http = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+tauri-build = { workspace = true }
 
 [dev-dependencies]
 mac-storage-storage = { workspace = true }

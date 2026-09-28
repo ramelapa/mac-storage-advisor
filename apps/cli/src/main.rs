@@ -3,11 +3,13 @@
 #![forbid(unsafe_code)]
 
 mod advise;
+mod doctor;
 mod query;
 mod report;
 mod size;
 mod trash_cmd;
 mod ui;
+mod window;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -46,14 +48,15 @@ Examples:
   mac-storage recommendations
   mac-storage trends
   mac-storage trash --scan 1 --path ~/Downloads/old.dmg
+  mac-storage doctor
   mac-storage ui --port 47231
+  mac-storage window
 
-Planned commands (not implemented):
-  doctor
+`doctor` checks that the database belongs to this app, that its schema matches, and that SQLite's integrity check passes. It also lists recent Trash moves. It does not change files.
 
 `trash` moves a path only when you pass --confirm followed by the phrase move to trash.
 It uses the operating-system Trash. It does not permanently delete, and it will not
-move an iCloud placeholder. A Tauri window is not in this version.
+move an iCloud placeholder. `window` opens this same page in a native window.
 
 --threads is accepted and stored. Scanning and hashing run on one thread.
 Exclusions: a name (node_modules), a path prefix (sub/dir or /abs/path), or a glob
@@ -86,8 +89,12 @@ enum Command {
     Trends(advise::TrendsArgs),
     /// Move named paths from a stored scan to the OS Trash. Requires confirmation.
     Trash(trash_cmd::TrashArgs),
+    /// Check the local database and list recent Trash moves. Does not change files.
+    Doctor(doctor::DoctorArgs),
     /// Open a local page on 127.0.0.1 to run a scan and read the results.
     Ui(ui::UiArgs),
+    /// Open the local page in a native window. The page stays on 127.0.0.1.
+    Window(window::WindowArgs),
 }
 
 #[derive(Debug, Args)]
@@ -153,7 +160,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Recommendations(args) => advise::recommendations_command(args),
         Command::Trends(args) => advise::trends_command(args),
         Command::Trash(args) => trash_cmd::trash_command(args),
+        Command::Doctor(args) => doctor::doctor_command(args),
         Command::Ui(args) => ui::ui_command(args),
+        Command::Window(args) => window::window_command(args),
     }
 }
 

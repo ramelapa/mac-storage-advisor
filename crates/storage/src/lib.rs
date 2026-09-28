@@ -21,7 +21,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, include_str!("../migrations/003_space_and_trash.sql")),
 ];
 
-const SCHEMA_VERSION: &str = "3";
+pub const SCHEMA_VERSION: &str = "3";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -56,6 +56,14 @@ pub struct Database {
 pub struct StoredFile {
     pub id: i64,
     pub record: FileRecord,
+}
+
+/// A path this process already moved to Trash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrashEvent {
+    pub scan_id: i64,
+    pub path: PathBuf,
+    pub moved_at: SystemTime,
 }
 
 /// A path from one scan that a confirmed Trash move is allowed to consider.
@@ -457,6 +465,63 @@ impl Database {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn scan_count(&self) -> Result<u64, StorageError> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM scans", [], |row| row.get(0))?;
+        u64::try_from(count).map_err(|_| StorageError::ValueOutOfRange {
+            value: u64::try_from(count).unwrap_or(u64::MAX),
+        })
+    }
+
+    pub fn trash_event_count(&self) -> Result<u64, StorageError> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM trash_events", [], |row| row.get(0))?;
+        u64::try_from(count).map_err(|_| StorageError::ValueOutOfRange {
+            value: u64::try_from(count).unwrap_or(u64::MAX),
+        })
+    }
+
+    /// Newest events first. This reads the log. It does not move files.
+    pub fn list_trash_events(&self, limit: u64) -> Result<Vec<TrashEvent>, StorageError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT scan_id, path, moved_at FROM trash_events ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![req_i64(limit)?], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            let (scan_id, path, moved_at) = row?;
+            events.push(TrashEvent {
+                scan_id,
+                path: PathBuf::from(path),
+                moved_at: millis_to_time(Some(moved_at)).unwrap_or(UNIX_EPOCH),
+            });
+        }
+        Ok(events)
+    }
+
+    /// SQLite `integrity_check`. A healthy file returns `ok`.
+    pub fn integrity_report(&self) -> Result<String, StorageError> {
+        let mut stmt = self.conn.prepare("PRAGMA integrity_check")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut messages = Vec::new();
+        for row in rows {
+            messages.push(row?);
+        }
+        if messages.is_empty() {
+            Ok("ok".into())
+        } else {
+            Ok(messages.join("\n"))
+        }
     }
 
     /// Replace hash and duplicate-group rows for one scan. File rows stay put.
@@ -1315,5 +1380,24 @@ mod tests {
 
         db.replace_duplicate_result(newer_id, &[], &[]).unwrap();
         assert!(db.load_duplicate_groups(newer_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn integrity_and_trash_log_round_trip() {
+        let mut db = Database::open_in_memory().unwrap();
+        assert_eq!(db.scan_count().unwrap(), 0);
+        assert_eq!(db.trash_event_count().unwrap(), 0);
+        assert_eq!(db.integrity_report().unwrap(), "ok");
+        let scan = db.save_scan(&sample_snapshot()).unwrap();
+        let moved = UNIX_EPOCH + Duration::from_millis(1_700_000_000_500);
+        db.record_trash_events(scan.id, &[PathBuf::from("/tmp/fixture/notes.txt")], moved)
+            .unwrap();
+        assert_eq!(db.scan_count().unwrap(), 1);
+        assert_eq!(db.trash_event_count().unwrap(), 1);
+        let events = db.list_trash_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].scan_id, scan.id);
+        assert_eq!(events[0].path, PathBuf::from("/tmp/fixture/notes.txt"));
+        assert_eq!(events[0].moved_at, moved);
     }
 }

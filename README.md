@@ -24,10 +24,12 @@ Nothing is uploaded or deleted. Duplicate groups report extra content copies. Th
 - `mac-storage trends` compares totals for the same folder across scans.
 - `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows large files, duplicates, suggestions, history, and trends. Its command-line view runs those same commands. It is not a system shell.
 - `mac-storage trash --path <PATH>` previews a move and does not touch the file. Adding `--confirm "move to trash"` moves that inventoried path to the OS Trash. iCloud placeholders, protected macOS paths, and the scan folder itself are refused.
+- `mac-storage doctor` checks that the database belongs to this app and that SQLite's integrity check passes. It lists recent Trash moves and does not change files.
+- `mac-storage window` opens the same local page in a native window. The page still listens on `127.0.0.1` only.
 
 ## Planned
 
-A Tauri window. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
+Nothing from the current roadmap is waiting. Later ideas are listed as deferred in [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
 
 Not in the MVP: AI suggestions, cloud sync, cross-device inventory, automatic or permanent deletion, photo/video similarity, semantic duplicates, and Windows or Linux as packaged products.
 
@@ -83,7 +85,9 @@ mac-storage recommendations
 mac-storage trends
 mac-storage trash --path ~/Downloads/old.dmg
 mac-storage trash --path ~/Downloads/old.dmg --confirm "move to trash"
+mac-storage doctor
 mac-storage ui
+mac-storage window
 mac-storage ui --port 47231 --db /path/to/mac-storage.sqlite
 ```
 
@@ -108,7 +112,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -140,7 +144,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 - `--exclude 'Downloads/*.dmg'` matches that suffix, not files in a nested folder.
 - `--exclude '/tmp/**/*.txt'` is an absolute glob.
 
-`duplicates`, `large-files`, `history`, `analyze`, and `recommendations` read the newest scan unless `--scan ID` is set. They exit 1 when the database has no scans. Hash errors are listed and do not abort the rest of the group. `doctor` is still only named in the help text.
+`duplicates`, `large-files`, `history`, `analyze`, and `recommendations` read the newest scan unless `--scan ID` is set. They exit 1 when the database has no scans. Hash errors are listed and do not abort the rest of the group. `doctor` exits 1 when the database cannot be opened or an integrity check fails.
 
 `duplicates --json` includes `duplicate_groups`, `hard_link_sets`, and `hash_errors`. File bytes are not in that object. `redundant_bytes` counts extra content copies after hard links are collapsed. Zero-byte files are not reported as duplicates.
 
@@ -158,7 +162,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.5 records iCloud placeholders, reports allocated-size gaps without calling them free space, and moves a confirmed path to Trash. Feature status is authoritative in [docs/features.md](docs/features.md). A Tauri window is still later work. `--threads` stays single-threaded.
+v0.6 checks the local database and opens the existing page in a native window. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
 
 ## Limitations
 
