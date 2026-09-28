@@ -1,0 +1,15 @@
+[package]
+name = "mac-storage-remediate"
+description = "User-confirmed move to Trash for inventoried paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mac-storage-scanner = { workspace = true }
+trash = { workspace = true }
+
+[lints]
+workspace = true

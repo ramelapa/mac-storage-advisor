@@ -24,8 +24,10 @@ const PREVIEW: usize = 6;
 pub struct InventoryFile {
     pub path: PathBuf,
     pub logical_size: u64,
+    pub allocated_size: Option<u64>,
     pub modified: Option<SystemTime>,
     pub extension: Option<String>,
+    pub is_dataless: bool,
 }
 
 /// A content-duplicate group already computed for the scan.
@@ -52,6 +54,8 @@ pub struct AdvisorReport {
     pub downloads: DownloadsSummary,
     pub developer: DeveloperSummary,
     pub office_locks: OfficeLockSummary,
+    pub dataless: DatalessSummary,
+    pub sparse_or_shared: SparseSummary,
     pub recommendations: Vec<Recommendation>,
 }
 
@@ -89,6 +93,21 @@ pub struct ArtifactTree {
     pub kind: &'static str,
     pub file_count: u64,
     pub logical_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DatalessSummary {
+    pub file_count: u64,
+    pub logical_bytes: u64,
+    pub files: Vec<PathSize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SparseSummary {
+    pub file_count: u64,
+    /// Logical size minus allocated size, summed. This gap is not reclaimable.
+    pub gap_bytes: u64,
+    pub files: Vec<PathSize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -141,9 +160,18 @@ pub fn advise(
     let mut categories: BTreeMap<&'static str, Vec<&InventoryFile>> = BTreeMap::new();
     let mut trees: BTreeMap<PathBuf, ArtifactAccum> = BTreeMap::new();
     let mut office = Vec::new();
+    let mut dataless_files = Vec::new();
+    let mut sparse_files = Vec::new();
     let downloads_root = is_downloads_root(root);
 
     for file in files {
+        if file.is_dataless {
+            dataless_files.push(file);
+            continue;
+        }
+        if is_sparse_or_shared(file) {
+            sparse_files.push(file);
+        }
         if is_office_lock(&file.path) {
             office.push(file);
             continue;
@@ -216,15 +244,59 @@ pub fn advise(
         logical_bytes: sum_sizes(&office),
         files: preview_files(&office),
     };
-    let recommendations =
-        recommendations_for(&stale, &downloads, &developer, &office_locks, duplicates);
+    let dataless = DatalessSummary {
+        file_count: count_of(&dataless_files),
+        logical_bytes: sum_sizes(&dataless_files),
+        files: preview_files(&dataless_files),
+    };
+    sparse_files.sort_by(|left, right| {
+        gap_of(right)
+            .cmp(&gap_of(left))
+            .then(left.path.cmp(&right.path))
+    });
+    let sparse_or_shared = SparseSummary {
+        file_count: count_of(&sparse_files),
+        gap_bytes: sparse_files
+            .iter()
+            .fold(0u64, |sum, file| sum.saturating_add(gap_of(file))),
+        files: preview_files(&sparse_files),
+    };
+    let recommendations = recommendations_for(
+        &stale,
+        &downloads,
+        &developer,
+        &office_locks,
+        &dataless,
+        &sparse_or_shared,
+        duplicates,
+    );
     AdvisorReport {
         stale,
         downloads,
         developer,
         office_locks,
+        dataless,
+        sparse_or_shared,
         recommendations,
     }
+}
+
+fn is_sparse_or_shared(file: &InventoryFile) -> bool {
+    match file.allocated_size {
+        Some(allocated) => file.logical_size > allocated,
+        None => false,
+    }
+}
+
+fn gap_of(file: &InventoryFile) -> u64 {
+    match file.allocated_size {
+        Some(allocated) if file.logical_size > allocated => file.logical_size - allocated,
+        _ => 0,
+    }
+}
+
+fn count_of(files: &[&InventoryFile]) -> u64 {
+    u64::try_from(files.len()).unwrap_or(u64::MAX)
 }
 
 /// Compare scans of the same root. Scans of different folders are not subtracted.
@@ -282,6 +354,8 @@ fn recommendations_for(
     downloads: &DownloadsSummary,
     developer: &DeveloperSummary,
     office: &OfficeLockSummary,
+    dataless: &DatalessSummary,
+    sparse: &SparseSummary,
     duplicates: &[DuplicateSet],
 ) -> Vec<Recommendation> {
     let mut recommendations = Vec::new();
@@ -407,6 +481,31 @@ fn recommendations_for(
             detail: "Names starting with ~$ are editor lock files. Matching hashes among them are not extra copies of the document.".into(),
             logical_bytes: office.logical_bytes,
             paths: office.files.iter().take(PREVIEW).map(|file| file.path.clone()).collect(),
+        });
+    }
+
+    if dataless.file_count > 0 {
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::CloudPlaceholders,
+            risk: RiskLevel::Info,
+            title: "Not stored on this Mac".into(),
+            detail: "These files are iCloud placeholders. Their logical size is not disk space used on this Mac. Moving a placeholder to Trash can remove the copy in iCloud, so this advisor will not move it.".into(),
+            logical_bytes: dataless.logical_bytes,
+            paths: dataless.files.iter().take(PREVIEW).map(|file| file.path.clone()).collect(),
+        });
+    }
+
+    if sparse.file_count > 0 {
+        recommendations.push(Recommendation {
+            category: RecommendationCategory::SharedExtents,
+            risk: RiskLevel::Info,
+            title: "Allocated size is below the logical size".into(),
+            detail: format!(
+                "{} files report less allocated space than their logical size, a gap of {} bytes. That can be a sparse file, compression, or shared APFS extents. The gap is not space you free by deleting a different copy.",
+                sparse.file_count, sparse.gap_bytes
+            ),
+            logical_bytes: sparse.gap_bytes,
+            paths: sparse.files.iter().take(PREVIEW).map(|file| file.path.clone()).collect(),
         });
     }
 
@@ -563,8 +662,10 @@ mod tests {
         InventoryFile {
             path: PathBuf::from(path),
             logical_size: size,
+            allocated_size: Some(size),
             modified,
             extension: extension.map(str::to_owned),
+            is_dataless: false,
         }
     }
 
@@ -736,6 +837,51 @@ mod tests {
             stale_duration(180),
         );
         assert_eq!(small_report.recommendations[0].risk, RiskLevel::Low);
+    }
+
+    #[test]
+    fn dataless_files_are_not_stale_and_sparse_gaps_are_not_reclaimable() {
+        let mut cloud = file(
+            "/Users/ram/Downloads/old.pdf",
+            5_000,
+            Some(400),
+            Some("pdf"),
+        );
+        cloud.is_dataless = true;
+        cloud.allocated_size = Some(0);
+        let mut sparse = file(
+            "/Users/ram/Documents/movie.mov",
+            10_000,
+            Some(1),
+            Some("mov"),
+        );
+        sparse.allocated_size = Some(1_000);
+        let report = advise(
+            Path::new("/Users/ram/Downloads"),
+            &[cloud, sparse],
+            &[],
+            now(),
+            stale_duration(180),
+        );
+        assert_eq!(report.stale.file_count, 0);
+        assert_eq!(report.dataless.file_count, 1);
+        assert_eq!(report.dataless.logical_bytes, 5_000);
+        assert_eq!(report.sparse_or_shared.file_count, 1);
+        assert_eq!(report.sparse_or_shared.gap_bytes, 9_000);
+        assert!(report.recommendations.iter().any(|item| {
+            item.category == RecommendationCategory::CloudPlaceholders
+                && item.risk == RiskLevel::Info
+                && item.detail.contains("will not move")
+        }));
+        assert!(report.recommendations.iter().any(|item| {
+            item.category == RecommendationCategory::SharedExtents
+                && item.detail.contains("not space you free")
+        }));
+        assert!(report
+            .downloads
+            .categories
+            .iter()
+            .all(|category| category.name != "documents" || category.file_count == 0));
     }
 
     #[test]

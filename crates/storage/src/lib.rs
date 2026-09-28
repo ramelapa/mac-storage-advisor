@@ -18,7 +18,10 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/001_init.sql")),
     (2, include_str!("../migrations/002_duplicates.sql")),
+    (3, include_str!("../migrations/003_space_and_trash.sql")),
 ];
+
+const SCHEMA_VERSION: &str = "3";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -53,6 +56,14 @@ pub struct Database {
 pub struct StoredFile {
     pub id: i64,
     pub record: FileRecord,
+}
+
+/// A path from one scan that a confirmed Trash move is allowed to consider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InventoryEntry {
+    pub path: PathBuf,
+    pub is_dataless: bool,
+    pub is_symlink: bool,
 }
 
 /// One previous scan, without its file rows.
@@ -227,9 +238,9 @@ impl Database {
             params![PRODUCT_NAME],
         )?;
         self.conn.execute(
-            "INSERT INTO settings(key, value) VALUES ('schema_version', '2')
+            "INSERT INTO settings(key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [],
+            params![SCHEMA_VERSION],
         )?;
         Ok(())
     }
@@ -364,7 +375,8 @@ impl Database {
         self.query_files(
             "SELECT id, path, filename, extension, logical_size, allocated_size,
                     created_time, modified_time, accessed_time, inode, device_id,
-                    permissions, file_type, is_symlink, is_broken_symlink, link_target
+                    permissions, file_type, is_symlink, is_broken_symlink, link_target,
+                    is_dataless
              FROM files
              WHERE scan_id = ?1 AND file_type = 'file' AND is_symlink = 0
              ORDER BY path",
@@ -382,7 +394,8 @@ impl Database {
         self.query_files(
             "SELECT id, path, filename, extension, logical_size, allocated_size,
                     created_time, modified_time, accessed_time, inode, device_id,
-                    permissions, file_type, is_symlink, is_broken_symlink, link_target
+                    permissions, file_type, is_symlink, is_broken_symlink, link_target,
+                    is_dataless
              FROM files
              WHERE scan_id = ?1 AND file_type = 'file' AND is_symlink = 0
                AND logical_size >= ?2
@@ -390,6 +403,60 @@ impl Database {
              LIMIT ?3",
             params![scan_id, req_i64(min_logical_size)?, req_i64(limit)?],
         )
+    }
+
+    /// Files and directories recorded for one scan. Used to decide what may move to Trash.
+    pub fn list_inventory(&self, scan_id: i64) -> Result<Vec<InventoryEntry>, StorageError> {
+        self.scan_root(scan_id)?;
+        let mut entries = Vec::new();
+        let mut files = self.conn.prepare(
+            "SELECT path, is_dataless, is_symlink FROM files WHERE scan_id = ?1 ORDER BY path",
+        )?;
+        let file_rows = files.query_map(params![scan_id], |row| {
+            Ok(InventoryEntry {
+                path: PathBuf::from(row.get::<_, String>(0)?),
+                is_dataless: row.get::<_, i64>(1)? != 0,
+                is_symlink: row.get::<_, i64>(2)? != 0,
+            })
+        })?;
+        for row in file_rows {
+            entries.push(row?);
+        }
+        drop(files);
+        let mut directories = self
+            .conn
+            .prepare("SELECT path FROM directories WHERE scan_id = ?1 ORDER BY path")?;
+        let directory_rows = directories.query_map(params![scan_id], |row| {
+            Ok(InventoryEntry {
+                path: PathBuf::from(row.get::<_, String>(0)?),
+                is_dataless: false,
+                is_symlink: false,
+            })
+        })?;
+        for row in directory_rows {
+            entries.push(row?);
+        }
+        Ok(entries)
+    }
+
+    /// Record paths that were already moved to Trash. This does not move files.
+    pub fn record_trash_events(
+        &mut self,
+        scan_id: i64,
+        paths: &[PathBuf],
+        moved_at: SystemTime,
+    ) -> Result<(), StorageError> {
+        self.scan_root(scan_id)?;
+        let moved = time_to_millis(Some(moved_at)).unwrap_or(0);
+        let tx = self.conn.transaction()?;
+        for path in paths {
+            tx.execute(
+                "INSERT INTO trash_events (scan_id, path, moved_at) VALUES (?1, ?2, ?3)",
+                params![scan_id, path_string(path), moved],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Replace hash and duplicate-group rows for one scan. File rows stay put.
@@ -560,11 +627,12 @@ fn insert_files(
         "INSERT INTO files (
             scan_id, path, filename, extension, logical_size, allocated_size,
             created_time, modified_time, accessed_time, inode, device_id,
-            permissions, file_type, is_symlink, is_broken_symlink, link_target
+            permissions, file_type, is_symlink, is_broken_symlink, link_target,
+            is_dataless
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6,
             ?7, ?8, ?9, ?10, ?11,
-            ?12, ?13, ?14, ?15, ?16
+            ?12, ?13, ?14, ?15, ?16, ?17
         )",
     )?;
     for file in files {
@@ -590,6 +658,7 @@ fn insert_files(
             i64::from(file.is_symlink),
             i64::from(file.is_broken_symlink),
             file.link_target.as_ref().map(|path| path_string(path)),
+            i64::from(file.is_dataless),
         ])?;
     }
     Ok(())
@@ -708,7 +777,8 @@ fn load_files(conn: &Connection, scan_id: i64) -> Result<Vec<FileRecord>, Storag
     let mut stmt = conn.prepare(
         "SELECT path, filename, extension, logical_size, allocated_size,
                 created_time, modified_time, accessed_time, inode, device_id,
-                permissions, file_type, is_symlink, is_broken_symlink, link_target
+                permissions, file_type, is_symlink, is_broken_symlink, link_target,
+                is_dataless
          FROM files WHERE scan_id = ?1 ORDER BY path",
     )?;
     let mut rows = stmt.query(params![scan_id])?;
@@ -734,6 +804,7 @@ fn load_files(conn: &Connection, scan_id: i64) -> Result<Vec<FileRecord>, Storag
             is_symlink: row.get::<_, i64>(12)? != 0,
             is_broken_symlink: row.get::<_, i64>(13)? != 0,
             link_target: link.map(PathBuf::from),
+            is_dataless: row.get::<_, i64>(15)? != 0,
         });
     }
     Ok(files)
@@ -814,6 +885,7 @@ fn stored_file_from_row(row: &rusqlite::Row<'_>) -> Result<StoredFile, StorageEr
             is_symlink: row.get::<_, i64>(13)? != 0,
             is_broken_symlink: row.get::<_, i64>(14)? != 0,
             link_target: link.map(PathBuf::from),
+            is_dataless: row.get::<_, i64>(16)? != 0,
         },
     })
 }
@@ -966,6 +1038,7 @@ mod tests {
                     is_symlink: false,
                     is_broken_symlink: false,
                     link_target: None,
+                    is_dataless: true,
                 },
                 FileRecord {
                     path: PathBuf::from("/tmp/fixture/broken"),
@@ -983,6 +1056,7 @@ mod tests {
                     is_symlink: true,
                     is_broken_symlink: true,
                     link_target: Some(PathBuf::from("missing")),
+                    is_dataless: false,
                 },
             ],
             directories: vec![DirectoryRecord {
@@ -1016,7 +1090,7 @@ mod tests {
             db.setting("product_name").unwrap().as_deref(),
             Some(PRODUCT_NAME)
         );
-        assert_eq!(db.setting("schema_version").unwrap().as_deref(), Some("2"));
+        assert_eq!(db.setting("schema_version").unwrap().as_deref(), Some("3"));
 
         let snap = sample_snapshot();
         let scan = db.save_scan(&snap).unwrap();
@@ -1048,6 +1122,7 @@ mod tests {
         assert_eq!(notes.kind, FileKind::File);
         assert_eq!(notes.modified, snap.files[0].modified);
         assert!(notes.created.is_none());
+        assert!(notes.is_dataless);
 
         let link = loaded
             .files
@@ -1148,7 +1223,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         assert!(matches!(
             db.resolve_scan_id(None).unwrap_err(),
             StorageError::NoScans
@@ -1173,6 +1248,7 @@ mod tests {
             is_symlink: false,
             is_broken_symlink: false,
             link_target: None,
+            is_dataless: false,
         });
         newer.statistics.files_scanned = 3;
         newer.statistics.logical_bytes = 61;

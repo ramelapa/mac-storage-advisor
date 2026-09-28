@@ -1,6 +1,6 @@
 # Safety model
 
-This version scans and can hash a stored scan. It does not delete, move, or trash files.
+This version scans, hashes, and can move a user-confirmed path to the OS Trash. It does not permanently delete files.
 
 ## What this version does
 
@@ -11,21 +11,22 @@ This version scans and can hash a stored scan. It does not delete, move, or tras
 - `duplicates` opens regular files that a scan already stored, hashes them with BLAKE3, and can re-read them when `--verify` is set. The hash is stored. The bytes are not.
 - `analyze` and `recommendations` read stored metadata and duplicate groups. They print suggestions. They do not move files.
 - `mac-storage ui` serves that same behavior on `127.0.0.1`. The page's command box only accepts advisor verbs. It does not invoke a shell.
+- `trash` moves a path to the operating-system Trash when the confirmation phrase is exactly `move to trash`. Without that phrase, nothing is moved.
 
 ## What this version does not do
 
 - `scan` does not open files to read contents.
 - It does not upload paths, names, hashes, or contents.
 - It does not follow symlinks during the walk, and it does not hash a symlink as if it were the target.
-- It does not delete, rename, or move anything.
-- It has no Trash integration and no `rm` integration.
+- It does not permanently delete or rename files, and it has no `rm` integration.
+- It does not move a path that the scan did not record, the scan folder itself, a protected macOS path, or an iCloud placeholder.
 - The local page does not listen on any address other than `127.0.0.1`.
 
 ## Permanent delete
 
-Permanent delete will not exist. A future remediation release may move a user-confirmed path to the operating-system Trash. Trash is reversible by the OS until the user empties it. Automatic deletion will not be implemented.
+Permanent delete will not exist. `trash` moves a user-confirmed path to the operating-system Trash. Trash is reversible by the OS until the user empties it. Automatic deletion will not be implemented.
 
-There is no hidden flag in this version that removes files. `--allow-protected-roots` only allows a scan of an exact protected prefix. It is a test override, not a deletion bypass.
+There is no boolean force flag. The confirmation text has to be `move to trash`. `--allow-protected-roots` only allows a scan of an exact protected prefix. It is a test override, not a deletion bypass, and Trash still refuses protected paths unless the scan was explicitly rooted inside that prefix as a project.
 
 ## Errors
 

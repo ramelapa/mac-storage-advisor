@@ -30,7 +30,8 @@ Logs go to stderr. They include scan start and finish with directory, file, byte
 | `mac-storage-common` | Display name, domain types, CLI-facing error | `serde`, `thiserror` |
 | `mac-storage-scanner` | Walk, exclusions, metadata | `common`, `walkdir`, `tracing` |
 | `mac-storage-duplicates` | Size, inode, and BLAKE3 grouping | `common`, `blake3` |
-| `mac-storage-analyze` | Stale files, Downloads, artifact trees, suggestions, trends | `common` |
+| `mac-storage-analyze` | Stale files, Downloads, artifact trees, suggestions, trends, placeholder and extent notes | `common` |
+| `mac-storage-remediate` | Confirmed move of inventoried paths to the OS Trash | `scanner`, `trash` |
 | `mac-storage-storage` | SQLite open, migrations, save/load | `common`, `rusqlite`, `directories` |
 | `mac-storage` (`apps/cli`) | Command line and `ui` on `127.0.0.1` | all of the above, `clap`, `tiny_http`, `tracing-subscriber` |
 
@@ -76,7 +77,7 @@ The scan root itself is never dropped by the walk filter.
 - No outbound network client. Paths, names, hashes, and contents are not uploaded. Hashes are computed only by `duplicates`. `mac-storage ui` listens on `127.0.0.1` and refuses a different Host header.
 - No `unsafe` in workspace crates (`forbid(unsafe_code)`).
 - `rusqlite` is built with the `bundled` feature so CI does not need a system SQLite.
-- `blake3` is used by the duplicates crate. `tiny_http` serves the local page. `rayon`, `trash`, `notify`, and `tauri` are still absent.
+- `blake3` is used by the duplicates crate. `tiny_http` serves the local page. The `trash` crate moves a confirmed path to the OS Trash. `rayon`, `notify`, and `tauri` are still absent.
 
 ## Decisions
 

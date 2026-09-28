@@ -16,6 +16,7 @@ clap = { workspace = true }
 mac-storage-analyze = { workspace = true }
 mac-storage-common = { workspace = true }
 mac-storage-duplicates = { workspace = true }
+mac-storage-remediate = { workspace = true }
 mac-storage-scanner = { workspace = true }
 mac-storage-storage = { workspace = true }
 serde = { workspace = true }

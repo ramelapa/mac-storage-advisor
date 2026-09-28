@@ -76,6 +76,15 @@ struct CommandBody {
     line: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct TrashBody {
+    #[serde(default)]
+    scan: Option<i64>,
+    paths: Vec<PathBuf>,
+    #[serde(default)]
+    confirmation: Option<String>,
+}
+
 #[derive(Serialize)]
 struct CommandResult {
     text: String,
@@ -108,6 +117,11 @@ enum PageCommand {
     },
     Trends {
         limit: u64,
+    },
+    Trash {
+        scan: Option<i64>,
+        paths: Vec<PathBuf>,
+        confirm: Option<String>,
     },
 }
 
@@ -238,6 +252,7 @@ fn dispatch(app: &App, method: &str, url: &str, host: Option<&str>, body: &[u8])
         ("GET", "/api/trends") => trends(app, &query),
         ("POST", "/api/scan") => scan(app, body),
         ("POST", "/api/duplicates") => duplicates(app, body),
+        ("POST", "/api/trash") => trash(app, body),
         ("POST", "/api/command") => command(app, body),
         _ => Err(Error::Usage("unknown request".into())),
     };
@@ -343,6 +358,21 @@ fn duplicates(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
     )?)
 }
 
+fn trash(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
+    let request: TrashBody = parse_json(body)?;
+    let confirmation = request
+        .confirmation
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    to_json(&crate::trash_cmd::run_trash(
+        Some(app.database.as_path()),
+        request.scan,
+        &request.paths,
+        confirmation,
+    )?)
+}
+
 fn command(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
     let request: CommandBody = parse_json(body)?;
     let parsed = parse_line(&request.line)?;
@@ -411,6 +441,20 @@ fn execute(app: &App, parsed: ParsedCommand) -> Result<CommandResult, Error> {
             let report = advise::run_trends(db, limit)?;
             finish(parsed.json, &report, advise::format_trends(&report))
         }
+        PageCommand::Trash {
+            scan,
+            paths,
+            confirm,
+        } => {
+            let report = crate::trash_cmd::run_trash(db, scan, &paths, confirm.as_deref())?;
+            let scan_id = Some(report.scan_id);
+            let text = if parsed.json {
+                pretty(&report)?
+            } else {
+                crate::trash_cmd::format_trash(&report)
+            };
+            Ok(CommandResult { text, scan_id })
+        }
     }
 }
 
@@ -451,9 +495,11 @@ Mac Storage Advisor page commands (not a system shell):
   analyze [--scan ID] [--older-than DAYS] [--json]
   recommendations [--scan ID] [--older-than DAYS] [--json]
   trends [--limit N] [--json]
+  trash --path PATH [--path PATH] [--scan ID] [--confirm PHRASE] [--json]
 
 A leading ~/ is your home directory. Pipes, semicolons, and other programs are refused.
-Nothing is uploaded or deleted.
+trash moves a path only when --confirm is exactly: move to trash. Otherwise nothing is moved.
+Nothing is uploaded or permanently deleted.
 "
 }
 
@@ -475,6 +521,8 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
     let mut verify = false;
     let mut limit = 20u64;
     let mut older_than = 180u64;
+    let mut trash_paths = Vec::new();
+    let mut confirm: Option<String> = None;
     let mut positionals = Vec::new();
     let mut index = 1;
     while index < words.len() {
@@ -525,6 +573,8 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
                 let raw = take_value(&mut index)?;
                 older_than = size::parse_days(&raw).map_err(|err| Error::Usage(err.to_string()))?;
             }
+            "--path" => trash_paths.push(PathBuf::from(take_value(&mut index)?)),
+            "--confirm" => confirm = Some(take_value(&mut index)?),
             "--db"
             | "--threads"
             | "--verbose"
@@ -543,6 +593,11 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
                 index += 1;
             }
         }
+    }
+    if verb != "trash" && (!trash_paths.is_empty() || confirm.is_some()) {
+        return Err(Error::Usage(
+            "--path and --confirm belong to the trash command".into(),
+        ));
     }
     let command = match verb {
         "help" => {
@@ -596,6 +651,14 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
         "trends" => {
             reject_positionals(verb, &positionals)?;
             PageCommand::Trends { limit }
+        }
+        "trash" => {
+            reject_positionals(verb, &positionals)?;
+            PageCommand::Trash {
+                scan,
+                paths: trash_paths,
+                confirm,
+            }
         }
         "rm" | "sh" | "bash" | "zsh" | "sudo" => {
             return Err(Error::Usage(format!(

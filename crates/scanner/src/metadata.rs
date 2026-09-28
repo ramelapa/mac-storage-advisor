@@ -28,6 +28,14 @@ pub struct CollectedMeta {
     pub is_symlink: bool,
     pub is_broken_symlink: bool,
     pub link_target: Option<PathBuf>,
+    pub is_dataless: bool,
+}
+
+/// macOS `SF_DATALESS` (`sys/stat.h`). Set when the file's data is not local.
+pub const SF_DATALESS: u32 = 0x4000_0000;
+
+pub fn is_dataless_flags(flags: u32) -> bool {
+    flags & SF_DATALESS != 0
 }
 
 pub fn classify(is_symlink: bool, is_dir: bool, is_file: bool) -> FileKind {
@@ -80,6 +88,7 @@ pub fn collect_metadata(path: &Path) -> Result<CollectedMeta, ScanErrorRecord> {
         is_symlink,
         is_broken_symlink,
         link_target,
+        is_dataless: dataless_of(&meta),
     })
 }
 
@@ -100,6 +109,7 @@ pub fn file_record(path: &Path, meta: &CollectedMeta) -> FileRecord {
         is_symlink: meta.is_symlink,
         is_broken_symlink: meta.is_broken_symlink,
         link_target: meta.link_target.clone(),
+        is_dataless: meta.is_dataless,
     }
 }
 
@@ -173,6 +183,17 @@ fn mode_of(_meta: &Metadata) -> Option<u32> {
     None
 }
 
+#[cfg(target_os = "macos")]
+fn dataless_of(meta: &Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    is_dataless_flags(meta.st_flags())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn dataless_of(_meta: &Metadata) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +204,13 @@ mod tests {
         assert_eq!(classify(false, true, false), FileKind::Directory);
         assert_eq!(classify(false, false, true), FileKind::File);
         assert_eq!(classify(false, false, false), FileKind::Other);
+    }
+
+    #[test]
+    fn dataless_flag_is_the_macos_bit_only() {
+        assert!(!is_dataless_flags(0));
+        assert!(!is_dataless_flags(0x0008_0000));
+        assert!(is_dataless_flags(SF_DATALESS));
+        assert!(is_dataless_flags(SF_DATALESS | 0x0001));
     }
 }

@@ -158,8 +158,10 @@ pub(crate) fn run_review(
         .map(|file| InventoryFile {
             path: file.record.path.clone(),
             logical_size: file.record.logical_size,
+            allocated_size: file.record.allocated_size,
             modified: file.record.modified,
             extension: file.record.extension.clone(),
+            is_dataless: file.record.is_dataless,
         })
         .collect();
     let duplicates = groups
@@ -290,6 +292,21 @@ pub(crate) fn format_analyze(report: &ReviewReport) -> String {
     out.push_str(&format!(
         "\nOffice lock files: {}, {} logical bytes\n",
         body.office_locks.file_count, body.office_locks.logical_bytes
+    ));
+    out.push_str(&format!(
+        "\nNot stored on this Mac: {}, {} logical bytes\n",
+        body.dataless.file_count, body.dataless.logical_bytes
+    ));
+    for file in &body.dataless.files {
+        out.push_str(&format!(
+            "  {}  {}\n",
+            file.logical_size,
+            file.path.display()
+        ));
+    }
+    out.push_str(&format!(
+        "\nAllocated below logical: {}, gap {} bytes (not reclaimable)\n",
+        body.sparse_or_shared.file_count, body.sparse_or_shared.gap_bytes
     ));
     out.push_str("\nRecommendations:\n");
     out.push_str(&recommendation_lines(report));

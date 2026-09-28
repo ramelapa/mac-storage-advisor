@@ -22,7 +22,7 @@ Use synthetic directories under the process temp dir. Do not point tests at a ho
 
 ## Scope of this repository
 
-Scan, duplicate grouping, large-file listing, history, suggestion review, and `mac-storage ui` are implemented. Trash and a Tauri window are specified in `docs/` and are not implemented. `blake3` is already a dependency of `crates/duplicates`. `tiny_http` serves the localhost page and does not upload anything. Do not add `trash`, `notify`, `tauri`, or `rayon` until that roadmap item is actually being built.
+Scan, duplicate grouping, large-file listing, history, suggestion review, `mac-storage ui`, and user-confirmed Trash are implemented. A Tauri window is specified in `docs/` and is not implemented. `blake3` is a dependency of `crates/duplicates`. `tiny_http` serves the localhost page. The `trash` crate moves files to the OS Trash and does not permanently delete them. Do not add `notify`, `tauri`, or `rayon` until that roadmap item is actually being built.
 
 Do not add a permanent-delete API. See [docs/safety-model.md](docs/safety-model.md).
 

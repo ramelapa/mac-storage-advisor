@@ -22,9 +22,12 @@ use mac_storage_common::{
 };
 use walkdir::WalkDir;
 
-pub use exclude::{is_exact_protected_root, protected_prefixes_under, ExclusionSet};
+pub use exclude::{
+    is_exact_protected_root, is_protected_path, normalize_lexical, protected_prefixes_under,
+    ExclusionSet,
+};
+pub use metadata::{is_dataless_flags, SF_DATALESS};
 
-use exclude::normalize_lexical;
 use metadata::{collect_metadata, directory_record, file_record, CollectedMeta};
 
 /// Failures that stop a scan before any walk, or that prevent the walk from starting.
@@ -507,6 +510,7 @@ mod tests {
         assert_eq!(notes.logical_size, 5);
         assert_eq!(notes.extension.as_deref(), Some("txt"));
         assert!(!notes.is_symlink);
+        assert!(!notes.is_dataless);
         assert!(notes.modified.is_some());
         assert!(notes.path.is_absolute());
         assert!(notes.path.ends_with("notes.txt"));

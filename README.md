@@ -23,10 +23,11 @@ Nothing is uploaded or deleted. Duplicate groups report extra content copies. Th
 - `mac-storage recommendations` prints suggestions only. It does not delete anything.
 - `mac-storage trends` compares totals for the same folder across scans.
 - `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows large files, duplicates, suggestions, history, and trends. Its command-line view runs those same commands. It is not a system shell.
+- `mac-storage trash --path <PATH>` previews a move and does not touch the file. Adding `--confirm "move to trash"` moves that inventoried path to the OS Trash. iCloud placeholders, protected macOS paths, and the scan folder itself are refused.
 
 ## Planned
 
-Move-to-Trash, a Tauri window, iCloud placeholder handling, and APFS clone awareness. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
+A Tauri window. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
 
 Not in the MVP: AI suggestions, cloud sync, cross-device inventory, automatic or permanent deletion, photo/video similarity, semantic duplicates, and Windows or Linux as packaged products.
 
@@ -44,6 +45,7 @@ Protected prefixes `/System`, `/private`, `/bin`, `/sbin`, `/usr`, and `/Library
 | `crates/scanner` | `walkdir` scan, exclusions, metadata |
 | `crates/duplicates` | BLAKE3 duplicate grouping over stored regular files |
 | `crates/storage` | SQLite via `rusqlite` (bundled) and migrations |
+| `crates/remediate` | Confirmed move to the OS Trash |
 | `apps/cli` | `mac-storage` binary: command line and the local page |
 
 The scanner does not depend on storage. `walkdir` is used instead of `ignore` so symlink policy and the exclusion language stay explicit. Diagram and rules: [docs/architecture.md](docs/architecture.md).
@@ -79,6 +81,8 @@ mac-storage history
 mac-storage analyze
 mac-storage recommendations
 mac-storage trends
+mac-storage trash --path ~/Downloads/old.dmg
+mac-storage trash --path ~/Downloads/old.dmg --confirm "move to trash"
 mac-storage ui
 mac-storage ui --port 47231 --db /path/to/mac-storage.sqlite
 ```
@@ -104,7 +108,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -154,7 +158,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.4 adds `mac-storage ui`, a localhost page with an interactive view and a command-line view, on top of the v0.3 suggestions. Feature status is authoritative in [docs/features.md](docs/features.md). Trash and a Tauri window are still later work. `--threads` stays single-threaded.
+v0.5 records iCloud placeholders, reports allocated-size gaps without calling them free space, and moves a confirmed path to Trash. Feature status is authoritative in [docs/features.md](docs/features.md). A Tauri window is still later work. `--threads` stays single-threaded.
 
 ## Limitations
 

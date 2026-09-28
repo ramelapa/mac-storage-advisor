@@ -6,11 +6,12 @@ members = [
     "crates/storage",
     "crates/duplicates",
     "crates/analyze",
+    "crates/remediate",
     "apps/cli",
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -23,8 +24,10 @@ directories = "5"
 mac-storage-analyze = { path = "crates/analyze" }
 mac-storage-common = { path = "crates/common" }
 mac-storage-duplicates = { path = "crates/duplicates" }
+mac-storage-remediate = { path = "crates/remediate" }
 mac-storage-scanner = { path = "crates/scanner" }
 mac-storage-storage = { path = "crates/storage" }
+trash = "5"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

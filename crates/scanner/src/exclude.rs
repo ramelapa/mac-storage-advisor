@@ -107,6 +107,15 @@ pub fn is_exact_protected_root(path: &Path) -> bool {
         .any(|prefix| path == Path::new(prefix))
 }
 
+/// True when `path` is a protected macOS prefix or a descendant of one.
+pub fn is_protected_path(path: &Path) -> bool {
+    let path = normalize_lexical(path);
+    PROTECTED_MACOS_PREFIXES.iter().any(|prefix| {
+        let prefix = Path::new(prefix);
+        path == prefix || path.starts_with(prefix)
+    })
+}
+
 pub fn protected_prefixes_under(root: &Path) -> Vec<PathBuf> {
     let root = normalize_lexical(root);
     PROTECTED_MACOS_PREFIXES

@@ -168,6 +168,8 @@ pub struct FileRecord {
     pub is_symlink: bool,
     pub is_broken_symlink: bool,
     pub link_target: Option<PathBuf>,
+    /// macOS `SF_DATALESS`: the file's bytes are not stored on this Mac.
+    pub is_dataless: bool,
 }
 
 /// Metadata for a directory that was entered. `logical_size` is the directory
@@ -244,6 +246,10 @@ pub enum RecommendationCategory {
     DeveloperArtifacts,
     Caches,
     Other,
+    /// An iCloud placeholder. Its logical size is not local disk usage.
+    CloudPlaceholders,
+    /// Allocated size is below logical size. The gap is not reclaimable.
+    SharedExtents,
 }
 
 /// Stable JSON object printed by `mac-storage scan --json`.

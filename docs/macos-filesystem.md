@@ -17,11 +17,11 @@ The product target is macOS and APFS. The scanner is portable enough to test on 
 
 ## What this version does not interpret
 
-- **APFS clones.** `clonefile` shares extents. `st_blocks` does not tell you how many bytes are unique to one file. This version does not claim reclaimable space.
+- **APFS clones.** `clonefile` shares extents. `st_blocks` does not tell you how many bytes are unique to one file. When allocated size is below logical size, the scan reports that gap and does not call it reclaimable. It does not group files into clone families.
 - **APFS snapshots.** Space can be held by a snapshot after a file is gone. Not visible to this scan.
 - **Firmlinks and firmlinked system volumes.** Not specially detected. A path is walked only if the user rooted the scan there and it is not an excluded prefix.
 - **Aliases.** Finder aliases are data files, not symlinks. They are recorded as normal files. They are not resolved.
-- **iCloud dataless files.** A placeholder can have a logical size and little or no local allocation. This version stores both numbers and does not decide whether the file is evicted.
+- **iCloud dataless files.** On macOS, `SF_DATALESS` is stored. A placeholder is left out of stale and Downloads totals. Trash will not move it, because that can remove the copy in iCloud. Linux scans record the flag as false.
 - **Resource forks and extended attributes.** Not read.
 - **Case folding.** APFS default volumes are case-insensitive. Exclusion matching is case-sensitive. `Node_Modules` does not match an exclusion of `node_modules`.
 - **Privacy (TCC).** macOS can deny access to Desktop, Documents, Downloads, or Mail even when Unix permissions look open. That denial is a recorded scan error if the OS returns one. This tool does not request Full Disk Access.

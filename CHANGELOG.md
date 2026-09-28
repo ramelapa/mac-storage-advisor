@@ -26,7 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Decision: `--threads` stays recorded only. Scanning and hashing remain one thread (`SCAN_CONCURRENCY = 1`).
 - `mac-storage analyze`, `recommendations`, and `trends`. Suggestions separate document duplicates from dependency-tree duplicates and Office `~$` lock files. Nothing is deleted. Trends compare scans of the same root only.
 - `mac-storage ui` serves a page on `127.0.0.1` (default port 47231). The page has an interactive view and a command-line view. Both call the same scan, duplicate, and suggestion code and the same SQLite file. The listener refuses any other host. The page is not a system shell.
+- macOS `SF_DATALESS` is stored. Placeholder files are left out of stale and Downloads totals, and Trash refuses them.
+- Files whose allocated size is below their logical size are reported as a sparse, compressed, or shared-extent gap. That gap is not reclaimable space, and clone groups are not inferred.
+- `mac-storage trash` moves named paths from a stored scan to the OS Trash only when `--confirm` is exactly `move to trash`. Without that phrase, nothing is moved.
 
 ### Not in this version
 
-- Trash, a Tauri window, parallel scanning, iCloud placeholder handling, and APFS clone awareness.
+- A Tauri window, parallel scanning, and APFS clone grouping. Permanent delete will not exist.

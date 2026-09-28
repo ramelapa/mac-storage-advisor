@@ -1,6 +1,6 @@
 # ADR-0005: Non-destructive remediation
 
-- Status: Accepted
+- Status: Accepted. v0.5 implements the user-confirmed Trash path described below. Permanent delete and automatic deletion stay rejected.
 - Date: 2026-09-27
 
 ## Context

@@ -72,7 +72,7 @@
       margin-top: 16px;
     }
     label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-    input {
+    input, textarea {
       width: 100%;
       border: 1px solid var(--line);
       background: #fff;
@@ -81,6 +81,7 @@
       font: inherit;
       color: var(--ink);
     }
+    textarea { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
     .form {
       display: grid;
       grid-template-columns: 1.4fr 1fr 140px auto;
@@ -223,6 +224,20 @@
         <div id="advice-body"><p class="empty">Suggestions only. Nothing is moved or deleted.</p></div>
       </section>
 
+      <section class="panel" id="trash-panel">
+        <h2>Move to Trash</h2>
+        <p class="note">Name paths from this scan. Nothing moves until the confirmation box says <span class="path">move to trash</span>. iCloud placeholders are refused. This is the operating-system Trash, not a permanent delete.</p>
+        <label for="trash-paths">Paths, one per line</label>
+        <textarea id="trash-paths" rows="4" spellcheck="false"></textarea>
+        <div class="row" style="margin-top: 12px">
+          <button type="button" id="trash-preview" class="ghost">Preview</button>
+          <button type="button" id="trash-apply" class="primary">Move accepted paths</button>
+        </div>
+        <label for="trash-phrase">Confirmation</label>
+        <input id="trash-phrase" placeholder="move to trash" autocomplete="off">
+        <div id="trash-plan"></div>
+      </section>
+
       <section class="panel">
         <div class="row">
           <h2>History and trends</h2>
@@ -310,7 +325,8 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         "mac-storage history" + db,
         "mac-storage analyze" + db,
         "mac-storage recommendations" + db,
-        "mac-storage trends" + db
+        "mac-storage trends" + db,
+        "mac-storage trash --path PATH" + db
       ];
       $("cli-equivalents").textContent = "From a terminal:\n" + lines.join("\n");
     }
@@ -402,6 +418,12 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       host.replaceChildren();
       const stale = report.stale || {};
       host.append(el("p", "note", (stale.file_count || 0) + " stale files older than " + (stale.older_than_days || "?") + " days, " + bytes(stale.logical_bytes || 0) + "."));
+      if (report.dataless && report.dataless.file_count) {
+        host.append(el("p", "note", report.dataless.file_count + " files are not stored on this Mac (" + bytes(report.dataless.logical_bytes) + " logical). They will not be moved to Trash."));
+      }
+      if (report.sparse_or_shared && report.sparse_or_shared.file_count) {
+        host.append(el("p", "note", report.sparse_or_shared.file_count + " files have allocated size below logical size. The gap of " + bytes(report.sparse_or_shared.gap_bytes) + " is not reclaimable space."));
+      }
       if (report.downloads && report.downloads.applies) {
         const cats = (report.downloads.categories || []).map((cat) => cat.name + " " + cat.file_count).join(", ");
         host.append(el("p", "note", "Downloads: " + (cats || "no user files outside build directories") + "."));
@@ -428,7 +450,15 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         const risk = el("span", "risk " + (item.risk || "info"), item.risk || "info");
         title.append(risk, document.createTextNode(" " + item.title + " · " + bytes(item.logical_bytes)));
         row.append(title, el("div", "meta", item.detail));
-        for (const path of item.paths || []) row.append(el("div", "path", path));
+        for (const path of item.paths || []) {
+          const line = el("div", "path", path);
+          const add = document.createElement("button");
+          add.type = "button";
+          add.className = "ghost";
+          add.textContent = "Add to Trash list";
+          add.addEventListener("click", () => addTrashPath(path));
+          row.append(line, add);
+        }
         list.append(row);
       }
       host.append(list);
@@ -559,6 +589,66 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         setBanner("Suggestions are ready. Nothing was deleted.", true);
       } catch (err) {
         setBanner(err.message, false);
+      }
+    });
+
+    function trashPaths() {
+      return $("trash-paths").value.split("\n").map((line) => line.trim()).filter(Boolean);
+    }
+
+    function addTrashPath(path) {
+      const box = $("trash-paths");
+      const lines = trashPaths();
+      if (!lines.includes(path)) lines.push(path);
+      box.value = lines.join("\n");
+      showMode("ui");
+      $("trash-panel").scrollIntoView({ block: "nearest" });
+    }
+
+    function renderTrash(report) {
+      const host = $("trash-plan");
+      host.replaceChildren();
+      host.append(el("p", "note", report.applied ? "Moved " + report.moved.length + " path(s) to Trash." : "Nothing was moved."));
+      const accepted = el("ul");
+      for (const path of report.accepted || []) accepted.append(el("li", "path", path));
+      if ((report.accepted || []).length) host.append(el("p", "meta", "Accepted"), accepted);
+      const refused = el("ul");
+      for (const item of report.refused || []) refused.append(el("li", "path", item.path + " — " + item.reason));
+      if ((report.refused || []).length) host.append(el("p", "meta", "Refused"), refused);
+      for (const path of report.moved || []) host.append(el("p", "path", "Moved " + path));
+      if (report.failed) host.append(el("p", "banner", report.failed.path + ": " + report.failed.reason));
+    }
+
+    $("trash-preview").addEventListener("click", async () => {
+      try {
+        const report = await api("POST", "/api/trash", { scan: state.scanId, paths: trashPaths() });
+        renderTrash(report);
+        setBanner("Preview only. Nothing was moved.", true);
+      } catch (err) {
+        setBanner(err.message, false);
+      }
+    });
+
+    $("trash-apply").addEventListener("click", async () => {
+      const phrase = $("trash-phrase").value.trim();
+      if (phrase !== "move to trash") {
+        setBanner("Type move to trash in the confirmation box. Nothing was moved.", false);
+        return;
+      }
+      const button = $("trash-apply");
+      button.disabled = true;
+      try {
+        const report = await api("POST", "/api/trash", {
+          scan: state.scanId,
+          paths: trashPaths(),
+          confirmation: phrase
+        });
+        renderTrash(report);
+        setBanner(report.moved && report.moved.length ? "Moved the accepted paths to Trash." : "Nothing was moved.", true);
+      } catch (err) {
+        setBanner(err.message, false);
+      } finally {
+        button.disabled = false;
       }
     });
 

@@ -58,6 +58,10 @@ Opening a v0.1 database applies migration 2. `settings.schema_version` becomes `
 
 Suggestions and trends are computed when the command runs. They are not stored. `recommendations` and `trend_points` tables are still not created. Trend numbers come from the existing `scans` totals, and only scans of the same root are compared.
 
+## Schema migration 003
+
+Opening an older database applies migration 3. `settings.schema_version` becomes `3`. The migration adds `files.is_dataless` (0 on existing rows) and `trash_events`, a record of paths that were moved to Trash. The application does not delete scan rows.
+
 ## Memory
 
 The scan is held in memory and then written in one transaction. That is acceptable for the foundation and will not scale to an entire disk without a streaming insert. It is a known limitation.

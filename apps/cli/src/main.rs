@@ -6,6 +6,7 @@ mod advise;
 mod query;
 mod report;
 mod size;
+mod trash_cmd;
 mod ui;
 
 use std::path::PathBuf;
@@ -44,12 +45,15 @@ Examples:
   mac-storage analyze
   mac-storage recommendations
   mac-storage trends
+  mac-storage trash --scan 1 --path ~/Downloads/old.dmg
   mac-storage ui --port 47231
 
 Planned commands (not implemented):
   doctor
 
-A Tauri window and move-to-Trash are not in this version. Suggestions never delete files.
+`trash` moves a path only when you pass --confirm followed by the phrase move to trash.
+It uses the operating-system Trash. It does not permanently delete, and it will not
+move an iCloud placeholder. A Tauri window is not in this version.
 
 --threads is accepted and stored. Scanning and hashing run on one thread.
 Exclusions: a name (node_modules), a path prefix (sub/dir or /abs/path), or a glob
@@ -80,6 +84,8 @@ enum Command {
     Recommendations(advise::AnalyzeArgs),
     /// Compare logical and allocated totals for the same folder across scans.
     Trends(advise::TrendsArgs),
+    /// Move named paths from a stored scan to the OS Trash. Requires confirmation.
+    Trash(trash_cmd::TrashArgs),
     /// Open a local page on 127.0.0.1 to run a scan and read the results.
     Ui(ui::UiArgs),
 }
@@ -146,6 +152,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Analyze(args) => advise::analyze_command(args),
         Command::Recommendations(args) => advise::recommendations_command(args),
         Command::Trends(args) => advise::trends_command(args),
+        Command::Trash(args) => trash_cmd::trash_command(args),
         Command::Ui(args) => ui::ui_command(args),
     }
 }

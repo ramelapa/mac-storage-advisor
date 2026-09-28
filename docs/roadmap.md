@@ -1,6 +1,6 @@
 # Roadmap
 
-v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. A Tauri window and Trash are still later.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. A Tauri window is still later.
 
 ## v0.1 — Foundation (this version)
 
@@ -42,11 +42,17 @@ Done:
 - `mac-storage ui` on `127.0.0.1`, default port 47231
 - Interactive results and a command-line view in the same page, using the same database
 
+### v0.5
+
+Done:
+
+- macOS `SF_DATALESS` is stored and excluded from local stale and Downloads totals
+- Allocated-below-logical gaps are reported and are not called reclaimable space
+- `mac-storage trash` moves named paths to the OS Trash only after the phrase `move to trash`
+
 Still planned:
 
 - Tauri window on the same Rust core
-- Move to Trash as the only remediation
-- iCloud placeholder handling and APFS clone awareness
 
 ## Future / Deferred
 
