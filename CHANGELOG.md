@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mac-storage large-files` and `mac-storage history`.
 - Decision: `--threads` stays recorded only. Scanning and hashing remain one thread (`SCAN_CONCURRENCY = 1`).
 - `mac-storage analyze`, `recommendations`, and `trends`. Suggestions separate document duplicates from dependency-tree duplicates and Office `~$` lock files. Nothing is deleted. Trends compare scans of the same root only.
+- `mac-storage ui` serves a page on `127.0.0.1` (default port 47231). The page has an interactive view and a command-line view. Both call the same scan, duplicate, and suggestion code and the same SQLite file. The listener refuses any other host. The page is not a system shell.
 
 ### Not in this version
 
-- Analyzers, recommendations, trends, Trash, parallel scanning, and the Tauri UI.
+- Trash, a Tauri window, parallel scanning, iCloud placeholder handling, and APFS clone awareness.

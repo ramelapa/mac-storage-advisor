@@ -7,6 +7,8 @@ Mac Storage Advisor is a local Rust workspace. `scan` records metadata. `duplica
 ```mermaid
 flowchart TD
     user[User] --> cli["mac-storage scan, duplicates, analyze, trends"]
+    user --> ui["mac-storage ui on 127.0.0.1"]
+    ui --> cli
     cli --> policy[Root policy and exclusions]
     policy --> walk["walkdir, single-threaded, follow_links false"]
     walk --> meta["symlink_metadata, no content reads"]
@@ -14,7 +16,7 @@ flowchart TD
     snap --> sqlite[(SQLite in the platform data dir)]
     sqlite --> dup["duplicates: BLAKE3 over stored regular files"]
     dup --> sqlite
-    cli --> report[Human summary or JSON on stdout]
+    cli --> report[Human summary, JSON, or the local page]
     snap --> report
     sqlite --> report
 ```
@@ -30,7 +32,7 @@ Logs go to stderr. They include scan start and finish with directory, file, byte
 | `mac-storage-duplicates` | Size, inode, and BLAKE3 grouping | `common`, `blake3` |
 | `mac-storage-analyze` | Stale files, Downloads, artifact trees, suggestions, trends | `common` |
 | `mac-storage-storage` | SQLite open, migrations, save/load | `common`, `rusqlite`, `directories` |
-| `mac-storage` (`apps/cli`) | `scan`, `duplicates`, `large-files`, `history`, `analyze`, `recommendations`, `trends` | all of the above, `clap`, `tracing-subscriber` |
+| `mac-storage` (`apps/cli`) | Command line and `ui` on `127.0.0.1` | all of the above, `clap`, `tiny_http`, `tracing-subscriber` |
 
 `common` does not depend on the scanner, duplicates, analyze, or storage. The scanner does not depend on storage and does not read file contents. The duplicates and analyze crates do not depend on storage. The CLI loads rows, runs the pass, and writes hashes back. Suggestions are computed when requested and are not stored.
 
@@ -71,10 +73,10 @@ The scan root itself is never dropped by the walk filter.
 
 ## Dependency rules
 
-- No network client. Paths, names, hashes, and contents are not uploaded. Hashes are computed only by `duplicates`.
+- No outbound network client. Paths, names, hashes, and contents are not uploaded. Hashes are computed only by `duplicates`. `mac-storage ui` listens on `127.0.0.1` and refuses a different Host header.
 - No `unsafe` in workspace crates (`forbid(unsafe_code)`).
 - `rusqlite` is built with the `bundled` feature so CI does not need a system SQLite.
-- `blake3` is used by the duplicates crate. `rayon`, `trash`, `notify`, and `tauri` are still absent.
+- `blake3` is used by the duplicates crate. `tiny_http` serves the local page. `rayon`, `trash`, `notify`, and `tauri` are still absent.
 
 ## Decisions
 

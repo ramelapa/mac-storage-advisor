@@ -195,5 +195,6 @@ fn help_lists_scan_and_planned_commands() {
     assert!(text.contains("scan"));
     assert!(text.contains("duplicates"));
     assert!(text.contains("recommendations"));
+    assert!(text.contains("mac-storage ui"));
     assert!(text.contains("Mac Storage Advisor"));
 }

@@ -10,6 +10,7 @@ This version scans and can hash a stored scan. It does not delete, move, or tras
 - Prints a summary. `--json` includes error paths and messages.
 - `duplicates` opens regular files that a scan already stored, hashes them with BLAKE3, and can re-read them when `--verify` is set. The hash is stored. The bytes are not.
 - `analyze` and `recommendations` read stored metadata and duplicate groups. They print suggestions. They do not move files.
+- `mac-storage ui` serves that same behavior on `127.0.0.1`. The page's command box only accepts advisor verbs. It does not invoke a shell.
 
 ## What this version does not do
 
@@ -18,6 +19,7 @@ This version scans and can hash a stored scan. It does not delete, move, or tras
 - It does not follow symlinks during the walk, and it does not hash a symlink as if it were the target.
 - It does not delete, rename, or move anything.
 - It has no Trash integration and no `rm` integration.
+- The local page does not listen on any address other than `127.0.0.1`.
 
 ## Permanent delete
 

@@ -141,4 +141,5 @@ fn help_lists_the_new_commands_and_still_names_planned_ones() {
     assert!(text.contains("large-files"));
     assert!(text.contains("history"));
     assert!(text.contains("recommendations"));
+    assert!(text.contains("mac-storage ui"));
 }

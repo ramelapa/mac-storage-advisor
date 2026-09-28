@@ -74,13 +74,23 @@ pub fn recommendations_command(args: AnalyzeArgs) -> Result<(), Error> {
 }
 
 pub fn trends_command(args: TrendsArgs) -> Result<(), Error> {
-    if args.limit == 0 {
+    crate::init_tracing(args.verbose, args.quiet, args.json);
+    let report = run_trends(args.db.as_deref(), args.limit)?;
+    if args.json {
+        report::write_value(&report, std::io::stdout())?;
+    } else if !args.quiet {
+        print!("{}", format_trends(&report));
+    }
+    Ok(())
+}
+
+pub(crate) fn run_trends(db: Option<&Path>, limit: u64) -> Result<TrendsReport, Error> {
+    if limit == 0 {
         return Err(Error::Usage("--limit must be at least 1".into()));
     }
-    crate::init_tracing(args.verbose, args.quiet, args.json);
-    let (database, db_path) = open_database(args.db.as_deref())?;
+    let (database, db_path) = open_database(db)?;
     let scans = database
-        .list_scans(args.limit)
+        .list_scans(limit)
         .map_err(|err| Error::Storage(err.to_string()))?;
     let series = trends(
         scans
@@ -94,25 +104,41 @@ pub fn trends_command(args: TrendsArgs) -> Result<(), Error> {
             })
             .collect(),
     );
-    let report = TrendsReport {
+    Ok(TrendsReport {
         product: PRODUCT_NAME,
         version: PRODUCT_VERSION,
         database: db_path,
         series,
-    };
-    if args.json {
-        report::write_value(&report, std::io::stdout())?;
-    } else if !args.quiet {
-        print!("{}", format_trends(&report));
-    }
-    Ok(())
+    })
 }
 
 fn review_command(args: AnalyzeArgs, recommendations_only: bool) -> Result<(), Error> {
     crate::init_tracing(args.verbose, args.quiet, args.json);
-    let (database, db_path) = open_database(args.db.as_deref())?;
+    let report = run_review(args.db.as_deref(), args.scan, args.older_than)?;
+    if args.json {
+        if recommendations_only {
+            report::write_value(&recommendations_view(&report), std::io::stdout())?;
+        } else {
+            report::write_value(&report, std::io::stdout())?;
+        }
+    } else if !args.quiet {
+        if recommendations_only {
+            print!("{}", format_recommendations(&report));
+        } else {
+            print!("{}", format_analyze(&report));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn run_review(
+    db: Option<&Path>,
+    scan: Option<i64>,
+    older_than: u64,
+) -> Result<ReviewReport, Error> {
+    let (database, db_path) = open_database(db)?;
     let scan_id = database
-        .resolve_scan_id(args.scan)
+        .resolve_scan_id(scan)
         .map_err(|err| Error::Storage(err.to_string()))?;
     let root = database
         .scan_root(scan_id)
@@ -153,32 +179,18 @@ fn review_command(args: AnalyzeArgs, recommendations_only: bool) -> Result<(), E
         &files,
         &duplicates,
         SystemTime::now(),
-        stale_duration(args.older_than),
+        stale_duration(older_than),
     );
-    let report = ReviewReport {
+    Ok(ReviewReport {
         product: PRODUCT_NAME,
         version: PRODUCT_VERSION,
         scan_id,
         root,
         database: db_path,
-        older_than_days: args.older_than,
+        older_than_days: older_than,
         duplicates_loaded: !groups.is_empty(),
         report: advised,
-    };
-    if args.json {
-        if recommendations_only {
-            report::write_value(&recommendations_view(&report), std::io::stdout())?;
-        } else {
-            report::write_value(&report, std::io::stdout())?;
-        }
-    } else if !args.quiet {
-        if recommendations_only {
-            print!("{}", format_recommendations(&report));
-        } else {
-            print!("{}", format_analyze(&report));
-        }
-    }
-    Ok(())
+    })
 }
 
 fn open_database(flag: Option<&Path>) -> Result<(Database, PathBuf), Error> {
@@ -189,7 +201,7 @@ fn open_database(flag: Option<&Path>) -> Result<(Database, PathBuf), Error> {
 }
 
 #[derive(Debug, Serialize)]
-struct ReviewReport {
+pub(crate) struct ReviewReport {
     product: &'static str,
     version: &'static str,
     scan_id: i64,
@@ -202,7 +214,7 @@ struct ReviewReport {
 }
 
 #[derive(Debug, Serialize)]
-struct RecommendationsView<'a> {
+pub(crate) struct RecommendationsView<'a> {
     product: &'static str,
     version: &'static str,
     scan_id: i64,
@@ -212,14 +224,14 @@ struct RecommendationsView<'a> {
 }
 
 #[derive(Debug, Serialize)]
-struct TrendsReport {
+pub(crate) struct TrendsReport {
     product: &'static str,
     version: &'static str,
     database: PathBuf,
     series: Vec<TrendSeries>,
 }
 
-fn recommendations_view(report: &ReviewReport) -> RecommendationsView<'_> {
+pub(crate) fn recommendations_view(report: &ReviewReport) -> RecommendationsView<'_> {
     RecommendationsView {
         product: report.product,
         version: report.version,
@@ -230,7 +242,7 @@ fn recommendations_view(report: &ReviewReport) -> RecommendationsView<'_> {
     }
 }
 
-fn format_analyze(report: &ReviewReport) -> String {
+pub(crate) fn format_analyze(report: &ReviewReport) -> String {
     let body = &report.report;
     let mut out = format!(
         "{PRODUCT_NAME} {PRODUCT_VERSION}\nScan: {}\nRoot: {}\nSuggestions only. Logical bytes are not bytes the disk will free.\n",
@@ -284,7 +296,7 @@ fn format_analyze(report: &ReviewReport) -> String {
     out
 }
 
-fn format_recommendations(report: &ReviewReport) -> String {
+pub(crate) fn format_recommendations(report: &ReviewReport) -> String {
     let mut out = format!(
         "{PRODUCT_NAME} {PRODUCT_VERSION}\nRecommendations: {}\nNothing is deleted.\n",
         report.report.recommendations.len()
@@ -313,7 +325,7 @@ fn recommendation_lines(report: &ReviewReport) -> String {
     out
 }
 
-fn format_trends(report: &TrendsReport) -> String {
+pub(crate) fn format_trends(report: &TrendsReport) -> String {
     let mut out = format!(
         "{PRODUCT_NAME} {PRODUCT_VERSION}\nFolders: {}\nAllocated bytes are not reclaimable space.\n",
         report.series.len()

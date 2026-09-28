@@ -2,7 +2,7 @@
 
 Status values: Planned, In Progress, Done, Deferred, Experimental.
 
-Only rows with automated tests are Done. v0.3 adds review suggestions. Scanning and hashing stay one thread. Tauri and Trash are still planned.
+Only rows with automated tests are Done. v0.4 adds a localhost page. Scanning and hashing stay one thread. A Tauri window and Trash are still planned.
 
 | ID | Feature | Status | Release | Description |
 | --- | --- | --- | --- | --- |
@@ -26,7 +26,7 @@ Only rows with automated tests are Done. v0.3 adds review suggestions. Scanning 
 | F-018 | Developer artifact analyzer | Done | 0.3 | Rolls up `node_modules`, `target`, `.venv`, `site-packages`, and similar directories. The earliest matching component wins. |
 | F-019 | Recommendation engine | Done | 0.3 | Suggestions only. Document duplicates stay separate from package-metadata duplicates and `~$` lock files. Nothing is deleted. |
 | F-020 | Storage trends | Done | 0.3 | Compare logical and allocated totals across scans of the same root. Different folders are not subtracted. |
-| F-021 | Tauri desktop UI | Planned | 0.3 | Share the Rust core. No UI crate in this workspace. |
+| F-021 | Tauri desktop UI | Planned | 0.3 | A native window is still later. The localhost page is F-036. |
 | F-022 | Move to Trash | Planned | 0.3 | Later remediation moves items to the OS Trash. Not implemented. |
 | F-023 | Parallel scanning | Deferred | 0.2 | Decided: stay single-threaded. `--threads` is stored. `SCAN_CONCURRENCY` is 1 for scanning and hashing. No thread pool. |
 | F-024 | iCloud placeholder handling | Planned | 0.3 | Do not treat dataless files as reclaimable without an explicit model. Not implemented. |
@@ -41,3 +41,4 @@ Only rows with automated tests are Done. v0.3 adds review suggestions. Scanning 
 | F-033 | Windows product | Deferred | Future | The engine avoids Unix-only APIs where practical. There is no Windows product. |
 | F-034 | Linux product | Deferred | Future | Tests run on Linux. Packaged support is macOS. |
 | F-035 | Filesystem watcher | Deferred | Future | `notify` is not a dependency. |
+| F-036 | Local interactive UI | Done | 0.4 | `mac-storage ui` listens on `127.0.0.1` and shows scan, duplicate, large-file, suggestion, and trend results. The page also runs the command-line verbs. It does not upload or delete files. |

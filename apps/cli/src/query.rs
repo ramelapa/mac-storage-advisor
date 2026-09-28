@@ -96,9 +96,23 @@ pub struct HistoryArgs {
 
 pub fn duplicates_command(args: DuplicatesArgs) -> Result<(), Error> {
     crate::init_tracing(args.verbose, args.quiet, args.json);
-    let (mut database, db_path) = open_database(args.db.as_deref())?;
+    let report = run_duplicates(args.db.as_deref(), args.scan, args.verify)?;
+    if args.json {
+        report::write_value(&report, std::io::stdout())?;
+    } else if !args.quiet {
+        print!("{}", format_duplicates(&report));
+    }
+    Ok(())
+}
+
+pub(crate) fn run_duplicates(
+    db: Option<&std::path::Path>,
+    scan: Option<i64>,
+    verify: bool,
+) -> Result<DuplicatesReport, Error> {
+    let (mut database, db_path) = open_database(db)?;
     let scan_id = database
-        .resolve_scan_id(args.scan)
+        .resolve_scan_id(scan)
         .map_err(|err| Error::Storage(err.to_string()))?;
     let root = database
         .scan_root(scan_id)
@@ -109,10 +123,10 @@ pub fn duplicates_command(args: DuplicatesArgs) -> Result<(), Error> {
     tracing::info!(
         scan_id,
         files = stored.len(),
-        verify = args.verify,
+        verify,
         "duplicate pass started"
     );
-    let analysis = find_duplicates(&candidates(&stored), args.verify);
+    let analysis = find_duplicates(&candidates(&stored), verify);
     database
         .replace_duplicate_result(scan_id, &hash_rows(&analysis), &group_rows(&analysis))
         .map_err(|err| Error::Storage(err.to_string()))?;
@@ -123,7 +137,7 @@ pub fn duplicates_command(args: DuplicatesArgs) -> Result<(), Error> {
         hash_errors = analysis.errors.len(),
         "duplicate pass finished"
     );
-    let report = DuplicatesReport {
+    Ok(DuplicatesReport {
         product: PRODUCT_NAME,
         version: PRODUCT_VERSION,
         scan_id,
@@ -132,34 +146,43 @@ pub fn duplicates_command(args: DuplicatesArgs) -> Result<(), Error> {
         duplicate_groups: analysis.groups.clone(),
         hard_link_sets: analysis.hard_link_sets.clone(),
         hash_errors: analysis.errors.clone(),
-        verified: args.verify,
+        verified: verify,
         concurrency: SCAN_CONCURRENCY,
         algorithm: HASH_ALGORITHM,
-    };
+    })
+}
+
+pub fn large_files_command(args: LargeArgs) -> Result<(), Error> {
+    crate::init_tracing(args.verbose, args.quiet, args.json);
+    let report = run_large_files(args.db.as_deref(), args.scan, args.limit, args.min_size)?;
     if args.json {
         report::write_value(&report, std::io::stdout())?;
     } else if !args.quiet {
-        print!("{}", format_duplicates(&report));
+        print!("{}", format_large(&report));
     }
     Ok(())
 }
 
-pub fn large_files_command(args: LargeArgs) -> Result<(), Error> {
-    if args.limit == 0 {
+pub(crate) fn run_large_files(
+    db: Option<&std::path::Path>,
+    scan: Option<i64>,
+    limit: u64,
+    min_size: u64,
+) -> Result<LargeFilesReport, Error> {
+    if limit == 0 {
         return Err(Error::Usage("--limit must be at least 1".into()));
     }
-    crate::init_tracing(args.verbose, args.quiet, args.json);
-    let (database, db_path) = open_database(args.db.as_deref())?;
+    let (database, db_path) = open_database(db)?;
     let scan_id = database
-        .resolve_scan_id(args.scan)
+        .resolve_scan_id(scan)
         .map_err(|err| Error::Storage(err.to_string()))?;
     let root = database
         .scan_root(scan_id)
         .map_err(|err| Error::Storage(err.to_string()))?;
     let files = database
-        .largest_files(scan_id, args.limit, args.min_size)
+        .largest_files(scan_id, limit, min_size)
         .map_err(|err| Error::Storage(err.to_string()))?;
-    let report = LargeFilesReport {
+    Ok(LargeFilesReport {
         product: PRODUCT_NAME,
         version: PRODUCT_VERSION,
         scan_id,
@@ -174,36 +197,37 @@ pub fn large_files_command(args: LargeArgs) -> Result<(), Error> {
                 allocated_size: file.record.allocated_size,
             })
             .collect(),
-    };
-    if args.json {
-        report::write_value(&report, std::io::stdout())?;
-    } else if !args.quiet {
-        print!("{}", format_large(&report));
-    }
-    Ok(())
+    })
 }
 
 pub fn history_command(args: HistoryArgs) -> Result<(), Error> {
-    if args.limit == 0 {
-        return Err(Error::Usage("--limit must be at least 1".into()));
-    }
     crate::init_tracing(args.verbose, args.quiet, args.json);
-    let (database, db_path) = open_database(args.db.as_deref())?;
-    let scans = database
-        .list_scans(args.limit)
-        .map_err(|err| Error::Storage(err.to_string()))?;
-    let report = HistoryReport {
-        product: PRODUCT_NAME,
-        version: PRODUCT_VERSION,
-        database: db_path,
-        scans: scans.iter().map(history_row).collect(),
-    };
+    let report = run_history(args.db.as_deref(), args.limit)?;
     if args.json {
         report::write_value(&report, std::io::stdout())?;
     } else if !args.quiet {
         print!("{}", format_history(&report));
     }
     Ok(())
+}
+
+pub(crate) fn run_history(
+    db: Option<&std::path::Path>,
+    limit: u64,
+) -> Result<HistoryReport, Error> {
+    if limit == 0 {
+        return Err(Error::Usage("--limit must be at least 1".into()));
+    }
+    let (database, db_path) = open_database(db)?;
+    let scans = database
+        .list_scans(limit)
+        .map_err(|err| Error::Storage(err.to_string()))?;
+    Ok(HistoryReport {
+        product: PRODUCT_NAME,
+        version: PRODUCT_VERSION,
+        database: db_path,
+        scans: scans.iter().map(history_row).collect(),
+    })
 }
 
 fn open_database(flag: Option<&std::path::Path>) -> Result<(Database, PathBuf), Error> {
@@ -273,7 +297,7 @@ fn history_row(scan: &ScanSummary) -> HistoryScan {
 }
 
 #[derive(Debug, Serialize)]
-struct DuplicatesReport {
+pub(crate) struct DuplicatesReport {
     product: &'static str,
     version: &'static str,
     scan_id: i64,
@@ -288,7 +312,7 @@ struct DuplicatesReport {
 }
 
 #[derive(Debug, Serialize)]
-struct LargeFilesReport {
+pub(crate) struct LargeFilesReport {
     product: &'static str,
     version: &'static str,
     scan_id: i64,
@@ -298,7 +322,7 @@ struct LargeFilesReport {
 }
 
 #[derive(Debug, Serialize)]
-struct LargeFile {
+pub(crate) struct LargeFile {
     file_id: i64,
     path: PathBuf,
     logical_size: u64,
@@ -306,7 +330,7 @@ struct LargeFile {
 }
 
 #[derive(Debug, Serialize)]
-struct HistoryReport {
+pub(crate) struct HistoryReport {
     product: &'static str,
     version: &'static str,
     database: PathBuf,
@@ -325,7 +349,7 @@ struct HistoryScan {
     elapsed_ms: u64,
 }
 
-fn format_duplicates(report: &DuplicatesReport) -> String {
+pub(crate) fn format_duplicates(report: &DuplicatesReport) -> String {
     let mut out = format!(
         "{PRODUCT_NAME} {PRODUCT_VERSION}\nScan: {}\nRoot: {}\nDuplicate groups: {}\nHard-link sets: {}\nRedundant logical bytes: {} ({})\nHash errors: {}\n",
         report.scan_id,
@@ -383,7 +407,7 @@ fn format_duplicates(report: &DuplicatesReport) -> String {
     out
 }
 
-fn format_large(report: &LargeFilesReport) -> String {
+pub(crate) fn format_large(report: &LargeFilesReport) -> String {
     let mut out = format!(
         "{PRODUCT_NAME} {PRODUCT_VERSION}\nScan: {}\nRoot: {}\nLargest files: {}\n",
         report.scan_id,
@@ -401,7 +425,7 @@ fn format_large(report: &LargeFilesReport) -> String {
     out
 }
 
-fn format_history(report: &HistoryReport) -> String {
+pub(crate) fn format_history(report: &HistoryReport) -> String {
     let mut out = format!(
         "{PRODUCT_NAME} {PRODUCT_VERSION}\nScans: {}\n",
         report.scans.len()

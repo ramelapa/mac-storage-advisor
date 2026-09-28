@@ -1,6 +1,6 @@
 # ADR-0002: Tauri for the future desktop UI
 
-- Status: Accepted (not implemented)
+- Status: Accepted (not implemented). v0.4 ships a localhost page first; see [ADR-0006](ADR-0006-local-ui.md).
 - Date: 2026-09-27
 
 ## Context

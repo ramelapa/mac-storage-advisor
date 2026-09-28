@@ -6,6 +6,7 @@ mod advise;
 mod query;
 mod report;
 mod size;
+mod ui;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -25,6 +26,14 @@ Local, non-destructive storage inventory. `scan` records metadata and does not r
 `duplicates` hashes stored regular files locally with BLAKE3. Hashes stay in the local database.
 Nothing is uploaded or deleted. Redundant bytes are not a promise of free disk space.
 
+Two ways to run the same local database:
+
+  mac-storage scan ~/Downloads
+  mac-storage ui
+
+`ui` serves a page on 127.0.0.1 only. The page has an interactive view and a
+command-line view. Neither one uploads or deletes files.
+
 Examples:
   mac-storage scan ~/Downloads
   mac-storage scan ~/Downloads --json
@@ -35,11 +44,12 @@ Examples:
   mac-storage analyze
   mac-storage recommendations
   mac-storage trends
+  mac-storage ui --port 47231
 
 Planned commands (not implemented):
   doctor
 
-Tauri and move-to-Trash are not in this version. Suggestions never delete files.
+A Tauri window and move-to-Trash are not in this version. Suggestions never delete files.
 
 --threads is accepted and stored. Scanning and hashing run on one thread.
 Exclusions: a name (node_modules), a path prefix (sub/dir or /abs/path), or a glob
@@ -70,6 +80,8 @@ enum Command {
     Recommendations(advise::AnalyzeArgs),
     /// Compare logical and allocated totals for the same folder across scans.
     Trends(advise::TrendsArgs),
+    /// Open a local page on 127.0.0.1 to run a scan and read the results.
+    Ui(ui::UiArgs),
 }
 
 #[derive(Debug, Args)]
@@ -134,6 +146,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Analyze(args) => advise::analyze_command(args),
         Command::Recommendations(args) => advise::recommendations_command(args),
         Command::Trends(args) => advise::trends_command(args),
+        Command::Ui(args) => ui::ui_command(args),
     }
 }
 

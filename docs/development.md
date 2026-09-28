@@ -17,6 +17,7 @@ cargo run -p mac-storage -- history
 cargo run -p mac-storage -- analyze
 cargo run -p mac-storage -- recommendations
 cargo run -p mac-storage -- trends
+cargo run -p mac-storage -- ui --port 47231
 ```
 
 `cargo audit` is not part of CI. Run it locally if you want advisory output. Do not fail a release on an advisory that cannot be fixed without abandoning a required crate.

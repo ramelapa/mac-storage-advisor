@@ -2,6 +2,8 @@
 
 Local, non-destructive inventory of a directory on macOS. `scan` walks a tree and records metadata in SQLite. `duplicates` then hashes those regular files locally. The display name is a placeholder (`PRODUCT_NAME` in `crates/common`). Crate and binary names stay `mac-storage`.
 
+The same binary has two run modes. The command line is `mac-storage scan` and the other report commands. `mac-storage ui` serves a page on `127.0.0.1` with an interactive view and a command-line view. Both use the same database.
+
 Nothing is uploaded or deleted. Duplicate groups report extra content copies. That number is not bytes the disk will free.
 
 ## What works now
@@ -20,10 +22,11 @@ Nothing is uploaded or deleted. Duplicate groups report extra content copies. Th
 - `mac-storage analyze` reviews stale files, a Downloads folder, and developer-artifact directories.
 - `mac-storage recommendations` prints suggestions only. It does not delete anything.
 - `mac-storage trends` compares totals for the same folder across scans.
+- `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows large files, duplicates, suggestions, history, and trends. Its command-line view runs those same commands. It is not a system shell.
 
 ## Planned
 
-Move-to-Trash, a Tauri UI, iCloud placeholder handling, and APFS clone awareness. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
+Move-to-Trash, a Tauri window, iCloud placeholder handling, and APFS clone awareness. See [docs/features.md](docs/features.md) and [docs/roadmap.md](docs/roadmap.md).
 
 Not in the MVP: AI suggestions, cloud sync, cross-device inventory, automatic or permanent deletion, photo/video similarity, semantic duplicates, and Windows or Linux as packaged products.
 
@@ -41,7 +44,7 @@ Protected prefixes `/System`, `/private`, `/bin`, `/sbin`, `/usr`, and `/Library
 | `crates/scanner` | `walkdir` scan, exclusions, metadata |
 | `crates/duplicates` | BLAKE3 duplicate grouping over stored regular files |
 | `crates/storage` | SQLite via `rusqlite` (bundled) and migrations |
-| `apps/cli` | `mac-storage` binary |
+| `apps/cli` | `mac-storage` binary: command line and the local page |
 
 The scanner does not depend on storage. `walkdir` is used instead of `ignore` so symlink policy and the exclusion language stay explicit. Diagram and rules: [docs/architecture.md](docs/architecture.md).
 
@@ -58,6 +61,7 @@ Or without installing:
 
 ```bash
 cargo run -p mac-storage -- scan ~/Downloads
+cargo run -p mac-storage -- ui
 ```
 
 The database defaults to this app's own data directory and does not replace any other application's database. On macOS that file is `~/Library/Application Support/com.mac-storage.mac-storage-advisor/mac-storage.sqlite`. Override it with `--db` or `MAC_STORAGE_DB`. A path that already points at a different SQLite file is refused.
@@ -75,6 +79,8 @@ mac-storage history
 mac-storage analyze
 mac-storage recommendations
 mac-storage trends
+mac-storage ui
+mac-storage ui --port 47231 --db /path/to/mac-storage.sqlite
 ```
 
 | Flag | Behavior |
@@ -98,7 +104,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -148,7 +154,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.3 adds `analyze`, `recommendations`, and `trends` on top of the v0.2 scan and duplicate pass. Feature status is authoritative in [docs/features.md](docs/features.md). Trash and the desktop UI are still later work. `--threads` stays single-threaded.
+v0.4 adds `mac-storage ui`, a localhost page with an interactive view and a command-line view, on top of the v0.3 suggestions. Feature status is authoritative in [docs/features.md](docs/features.md). Trash and a Tauri window are still later work. `--threads` stays single-threaded.
 
 ## Limitations
 
@@ -160,7 +166,7 @@ v0.3 adds `analyze`, `recommendations`, and `trends` on top of the v0.2 scan and
 - Exclusion matching is case-sensitive.
 - macOS aliases, iCloud placeholders, APFS clones, and snapshots are not interpreted.
 - If the SQLite file sits inside the scan root, a later scan counts it.
-- No desktop UI.
+- The local page listens on `127.0.0.1` only and handles one request at a time. A Tauri window is not part of this version.
 
 ## License
 

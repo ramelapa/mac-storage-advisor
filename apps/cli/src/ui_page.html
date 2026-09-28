@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mac Storage Advisor</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f3efe6;
+      --card: #fffdf8;
+      --ink: #1d1a16;
+      --muted: #6d655c;
+      --line: #e3d9cc;
+      --teal: #0e5f5c;
+      --teal-ink: #f6f3ec;
+      --warn: #8a3d32;
+      --info: #e5f2f1;
+      --shadow: 0 1px 0 rgba(29, 26, 22, 0.04);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.5 "Segoe UI", "Helvetica Neue", sans-serif;
+    }
+    header, main { width: min(980px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 28px 0 8px; }
+    .kicker {
+      margin: 0 0 6px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 12px;
+      color: var(--teal);
+    }
+    h1 {
+      margin: 0;
+      font-family: Palatino, "Palatino Linotype", "Iowan Old Style", Georgia, serif;
+      font-size: 40px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+    }
+    .sub { margin: 8px 0 0; color: var(--muted); }
+    .modes {
+      display: flex;
+      gap: 8px;
+      margin: 18px 0 0;
+    }
+    .modes button, button, .ghost {
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .modes button[aria-selected="true"], button.primary {
+      background: var(--teal);
+      color: var(--teal-ink);
+      border-color: var(--teal);
+    }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    main { padding-bottom: 48px; }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+      margin-top: 16px;
+    }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--ink);
+    }
+    .form {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 140px auto;
+      gap: 12px;
+      align-items: end;
+    }
+    .banner {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #f8ece8;
+      color: var(--warn);
+    }
+    .banner.ok { background: var(--info); color: var(--teal); }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .stat {
+      padding: 12px;
+      border-radius: 12px;
+      background: #f7f3eb;
+    }
+    .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .stat span { color: var(--muted); font-size: 13px; }
+    h2 { margin: 0 0 8px; font-size: 20px; font-family: Palatino, Georgia, serif; }
+    .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    ul { margin: 8px 0 0; padding: 0; list-style: none; }
+    li {
+      padding: 8px 0;
+      border-top: 1px solid var(--line);
+      word-break: break-word;
+    }
+    .path { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .meta { color: var(--muted); font-size: 13px; }
+    .risk {
+      display: inline-block;
+      min-width: 52px;
+      text-align: center;
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 12px;
+      background: var(--info);
+      color: var(--teal);
+    }
+    .risk.low { background: #f3ead4; color: #6d5420; }
+    .risk.medium { background: #f6e3d4; color: #7a4318; }
+    .empty { color: var(--muted); margin: 8px 0 0; }
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      min-height: 220px;
+      max-height: 460px;
+      overflow: auto;
+      background: #211e1a;
+      color: #f4efe6;
+      border-radius: 12px;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+    }
+    .prompt { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 12px; }
+    .note { color: var(--muted); font-size: 14px; }
+    #cli-equivalents { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .hidden { display: none; }
+    @media (max-width: 800px) {
+      h1 { font-size: 32px; }
+      .form, .stats, .prompt { grid-template-columns: 1fr; }
+      .modes { display: grid; grid-template-columns: 1fr 1fr; }
+      .row { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="kicker">Local inventory</p>
+    <h1>Mac Storage Advisor</h1>
+    <p class="sub" id="status-line">Starting…</p>
+    <div class="modes" role="tablist" aria-label="Run mode">
+      <button id="tab-ui" type="button" role="tab" aria-selected="true" aria-controls="view-ui">Interactive</button>
+      <button id="tab-cli" type="button" role="tab" aria-selected="false" aria-controls="view-cli">Command line</button>
+    </div>
+  </header>
+  <main>
+    <p id="banner" class="banner hidden" role="status"></p>
+
+    <section id="view-ui">
+      <form id="scan-form" class="panel">
+        <div class="form">
+          <div>
+            <label for="path">Folder</label>
+            <input id="path" name="path" required placeholder="/Users/you/Downloads" autocomplete="off">
+          </div>
+          <div>
+            <label for="exclude">Exclude names</label>
+            <input id="exclude" name="exclude" placeholder="node_modules, target" autocomplete="off">
+          </div>
+          <div>
+            <label for="min-size">Minimum size</label>
+            <input id="min-size" name="min_size" value="0" autocomplete="off">
+          </div>
+          <button class="primary" id="scan-button" type="submit">Scan</button>
+        </div>
+        <p class="note">The scan records names, sizes, and timestamps. It does not read file contents, upload anything, or delete anything.</p>
+      </form>
+
+      <section class="panel" id="overview">
+        <h2>This scan</h2>
+        <p class="empty" id="overview-empty">No scan loaded yet. Choose a folder, or pick one from history.</p>
+        <div id="overview-body" class="hidden"></div>
+      </section>
+
+      <section class="panel">
+        <div class="row">
+          <h2>Largest files</h2>
+          <button type="button" id="load-large" class="ghost">Load</button>
+        </div>
+        <div id="large-body"><p class="empty">Load the largest stored files for the selected scan.</p></div>
+      </section>
+
+      <section class="panel">
+        <div class="row">
+          <h2>Duplicates</h2>
+          <button type="button" id="find-duplicates" class="primary">Find duplicates</button>
+        </div>
+        <p class="note">Hashes stay in the local database. Redundant bytes are extra copies, not space the disk will free. Hard links are not counted twice.</p>
+        <div id="dup-body"></div>
+      </section>
+
+      <section class="panel">
+        <div class="row">
+          <div>
+            <h2>Suggestions</h2>
+            <label for="older-than">Stale after days</label>
+          </div>
+          <input id="older-than" value="180" style="max-width: 120px">
+          <button type="button" id="load-advice" class="ghost">Review</button>
+        </div>
+        <div id="advice-body"><p class="empty">Suggestions only. Nothing is moved or deleted.</p></div>
+      </section>
+
+      <section class="panel">
+        <div class="row">
+          <h2>History and trends</h2>
+          <button type="button" id="load-trends" class="ghost">Compare scans</button>
+        </div>
+        <div id="history-body"></div>
+        <div id="trends-body"></div>
+      </section>
+    </section>
+
+    <section id="view-cli" class="hidden">
+      <div class="panel">
+        <h2>Command line</h2>
+        <p class="note">Same database, same rules. This box runs the advisor commands. It is not a system shell, so it will not run <span class="path">rm</span> or anything with a pipe.</p>
+        <p class="note" id="cli-equivalents"></p>
+        <pre id="terminal" aria-live="polite">Mac Storage Advisor
+Type help, or scan a folder. A leading ~/ is your home directory.</pre>
+        <form id="cli-form" class="prompt">
+          <input id="cli-line" aria-label="Command" placeholder="scan ~/Downloads" autocomplete="off">
+          <button class="primary" id="cli-run" type="submit">Run</button>
+        </form>
+      </div>
+    </section>
+  </main>
+  <script>
+    const state = { database: "", scanId: null, root: "" };
+
+    function $(id) { return document.getElementById(id); }
+
+    function setBanner(text, ok) {
+      const banner = $("banner");
+      if (!text) {
+        banner.classList.add("hidden");
+        banner.textContent = "";
+        return;
+      }
+      banner.classList.remove("hidden");
+      banner.classList.toggle("ok", !!ok);
+      banner.textContent = text;
+    }
+
+    function bytes(n) {
+      const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+      let value = Number(n);
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      if (unit === 0) return n + " B";
+      return value.toFixed(1) + " " + units[unit];
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    async function api(method, url, body) {
+      const response = await fetch(url, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined
+      });
+      let data = {};
+      try { data = await response.json(); } catch (err) { data = { error: "The page returned an unreadable response." }; }
+      if (!response.ok) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    function shellQuote(value) {
+      if (/^[A-Za-z0-9_./~:-]+$/.test(value)) return value;
+      return "'" + value.replaceAll("'", "'\\''") + "'";
+    }
+
+    function refreshEquivalents() {
+      const path = $("path").value.trim() || "PATH";
+      const db = state.database ? " --db " + shellQuote(state.database) : "";
+      const lines = [
+        "mac-storage scan " + shellQuote(path) + db,
+        "mac-storage duplicates" + db,
+        "mac-storage large-files --limit 20" + db,
+        "mac-storage history" + db,
+        "mac-storage analyze" + db,
+        "mac-storage recommendations" + db,
+        "mac-storage trends" + db
+      ];
+      $("cli-equivalents").textContent = "From a terminal:\n" + lines.join("\n");
+    }
+
+    function showMode(which) {
+      const ui = which === "ui";
+      $("view-ui").classList.toggle("hidden", !ui);
+      $("view-cli").classList.toggle("hidden", ui);
+      $("tab-ui").setAttribute("aria-selected", ui ? "true" : "false");
+      $("tab-cli").setAttribute("aria-selected", ui ? "false" : "true");
+      if (!ui) refreshEquivalents();
+    }
+
+    function renderOverview(report) {
+      state.scanId = report.scan_id;
+      state.root = report.root || state.root;
+      $("overview-empty").classList.add("hidden");
+      const body = $("overview-body");
+      body.classList.remove("hidden");
+      body.replaceChildren();
+      const stats = el("div", "stats");
+      const cards = [
+        [String(report.directories_scanned), "Directories"],
+        [String(report.files_scanned), "Files"],
+        [bytes(report.logical_bytes), "Logical size"],
+        [String(report.errors), "Errors"]
+      ];
+      for (const [value, label] of cards) {
+        const card = el("div", "stat");
+        card.append(el("b", null, value), el("span", null, label));
+        stats.append(card);
+      }
+      body.append(stats);
+      const note = el("p", "note");
+      note.textContent = "Scan " + report.scan_id + " · " + report.root + " · " + report.elapsed_ms + " ms · allocated " + bytes(report.allocated_bytes) + " (not reclaimable space)";
+      body.append(note);
+      if (report.error_details && report.error_details.length) {
+        const list = el("ul");
+        for (const item of report.error_details) {
+          list.append(el("li", "path", (item.path ? item.path + ": " : "") + item.message));
+        }
+        body.append(list);
+      }
+    }
+
+    function renderLarge(report) {
+      const host = $("large-body");
+      host.replaceChildren();
+      if (!report.files.length) {
+        host.append(el("p", "empty", "No stored regular files matched."));
+        return;
+      }
+      const list = el("ul");
+      for (const file of report.files) {
+        const item = el("li");
+        item.append(el("div", "meta", bytes(file.logical_size) + " · " + file.logical_size + " bytes"));
+        item.append(el("div", "path", file.path));
+        list.append(item);
+      }
+      host.append(list);
+    }
+
+    function renderDuplicates(report) {
+      const host = $("dup-body");
+      host.replaceChildren();
+      const redundant = (report.duplicate_groups || []).reduce((sum, group) => sum + group.redundant_bytes, 0);
+      host.append(el("p", "note", report.duplicate_groups.length + " groups · " + report.hard_link_sets.length + " hard-link sets · redundant " + bytes(redundant) + " · hash errors " + report.hash_errors.length));
+      if (!report.duplicate_groups.length) {
+        host.append(el("p", "empty", "No duplicate content in this scan."));
+      }
+      const list = el("ul");
+      for (const group of report.duplicate_groups) {
+        const item = el("li");
+        item.append(el("div", "meta", bytes(group.logical_size) + " each · redundant " + bytes(group.redundant_bytes)));
+        for (const member of group.members) {
+          const role = member.hard_link_leader ? "copy" : "hard link";
+          item.append(el("div", "path", role + "  " + member.path));
+        }
+        list.append(item);
+      }
+      host.append(list);
+      for (const error of report.hash_errors || []) {
+        host.append(el("p", "banner", error.path + ": " + error.message));
+      }
+    }
+
+    function renderAdvice(report) {
+      const host = $("advice-body");
+      host.replaceChildren();
+      const stale = report.stale || {};
+      host.append(el("p", "note", (stale.file_count || 0) + " stale files older than " + (stale.older_than_days || "?") + " days, " + bytes(stale.logical_bytes || 0) + "."));
+      if (report.downloads && report.downloads.applies) {
+        const cats = (report.downloads.categories || []).map((cat) => cat.name + " " + cat.file_count).join(", ");
+        host.append(el("p", "note", "Downloads: " + (cats || "no user files outside build directories") + "."));
+      } else {
+        host.append(el("p", "note", "Downloads review applies when the folder is named Downloads."));
+      }
+      const trees = (report.developer && report.developer.trees) || [];
+      if (trees.length) {
+        const list = el("ul");
+        for (const tree of trees) {
+          list.append(el("li", "path", tree.kind + " · " + tree.file_count + " files · " + bytes(tree.logical_bytes) + " · " + tree.path));
+        }
+        host.append(list);
+      }
+      const recs = report.recommendations || [];
+      if (!recs.length) {
+        host.append(el("p", "empty", "No suggestions for this scan."));
+        return;
+      }
+      const list = el("ul");
+      for (const item of recs) {
+        const row = el("li");
+        const title = el("div");
+        const risk = el("span", "risk " + (item.risk || "info"), item.risk || "info");
+        title.append(risk, document.createTextNode(" " + item.title + " · " + bytes(item.logical_bytes)));
+        row.append(title, el("div", "meta", item.detail));
+        for (const path of item.paths || []) row.append(el("div", "path", path));
+        list.append(row);
+      }
+      host.append(list);
+    }
+
+    function renderHistory(report) {
+      const host = $("history-body");
+      host.replaceChildren();
+      if (!report.scans.length) {
+        host.append(el("p", "empty", "This database has no scans yet."));
+        return;
+      }
+      const list = el("ul");
+      for (const scan of report.scans) {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ghost";
+        button.textContent = "Use #" + scan.id;
+        button.addEventListener("click", () => selectScan(scan));
+        const text = el("div");
+        text.append(el("div", "path", scan.root));
+        text.append(el("div", "meta", "#" + scan.id + " · " + scan.status + " · " + scan.files_scanned + " files · " + bytes(scan.logical_bytes) + " · " + scan.errors + " errors"));
+        item.append(text, button);
+        list.append(item);
+      }
+      host.append(list);
+    }
+
+    function renderTrends(report) {
+      const host = $("trends-body");
+      host.replaceChildren();
+      const series = report.series || [];
+      if (!series.length) {
+        host.append(el("p", "empty", "No scans to compare."));
+        return;
+      }
+      const list = el("ul");
+      for (const item of series) {
+        const delta = item.logical_delta == null ? "one scan so far" : "logical change " + item.logical_delta + " bytes since the previous scan of this folder";
+        const row = el("li");
+        row.append(el("div", "path", item.root));
+        row.append(el("div", "meta", delta));
+        list.append(row);
+      }
+      host.append(list);
+    }
+
+    async function selectScan(scan) {
+      state.scanId = scan.id;
+      state.root = scan.root;
+      $("path").value = scan.root;
+      $("overview-empty").classList.add("hidden");
+      const body = $("overview-body");
+      body.classList.remove("hidden");
+      body.replaceChildren(el("p", "note", "Selected scan " + scan.id + " · " + scan.root + " · " + bytes(scan.logical_bytes) + " logical."));
+      setBanner("Selected scan " + scan.id + ".", true);
+      await loadLarge();
+    }
+
+    async function loadHistory() {
+      const report = await api("GET", "/api/history?limit=20");
+      renderHistory(report);
+      return report;
+    }
+
+    async function loadLarge() {
+      if (state.scanId == null) throw new Error("Scan a folder or select a scan first.");
+      const report = await api("GET", "/api/large-files?scan=" + state.scanId + "&limit=20");
+      renderLarge(report);
+    }
+
+    $("tab-ui").addEventListener("click", () => showMode("ui"));
+    $("tab-cli").addEventListener("click", () => showMode("cli"));
+    $("path").addEventListener("input", refreshEquivalents);
+
+    $("scan-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = $("scan-button");
+      button.disabled = true;
+      setBanner("Scanning. This stays on this computer.", true);
+      try {
+        const exclude = $("exclude").value.split(",").map((part) => part.trim()).filter(Boolean);
+        const report = await api("POST", "/api/scan", {
+          path: $("path").value.trim(),
+          exclude,
+          min_size: $("min-size").value.trim() || "0"
+        });
+        renderOverview(report);
+        setBanner("Scan " + report.scan_id + " finished.", true);
+        await loadHistory();
+        await loadLarge();
+      } catch (err) {
+        setBanner(err.message, false);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("load-large").addEventListener("click", async () => {
+      try { await loadLarge(); setBanner("", true); }
+      catch (err) { setBanner(err.message, false); }
+    });
+
+    $("find-duplicates").addEventListener("click", async () => {
+      const button = $("find-duplicates");
+      button.disabled = true;
+      setBanner("Hashing stored files locally.", true);
+      try {
+        const report = await api("POST", "/api/duplicates", { scan: state.scanId, verify: false });
+        state.scanId = report.scan_id;
+        renderDuplicates(report);
+        setBanner("Duplicate pass finished for scan " + report.scan_id + ".", true);
+      } catch (err) {
+        setBanner(err.message, false);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("load-advice").addEventListener("click", async () => {
+      try {
+        const older = $("older-than").value.trim() || "180";
+        const scan = state.scanId == null ? "" : "&scan=" + state.scanId;
+        const report = await api("GET", "/api/analyze?older_than=" + encodeURIComponent(older) + scan);
+        state.scanId = report.scan_id;
+        renderAdvice(report);
+        setBanner("Suggestions are ready. Nothing was deleted.", true);
+      } catch (err) {
+        setBanner(err.message, false);
+      }
+    });
+
+    $("load-trends").addEventListener("click", async () => {
+      try {
+        renderTrends(await api("GET", "/api/trends?limit=20"));
+      } catch (err) {
+        setBanner(err.message, false);
+      }
+    });
+
+    $("cli-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const line = $("cli-line").value.trim();
+      if (!line) return;
+      const button = $("cli-run");
+      button.disabled = true;
+      const terminal = $("terminal");
+      terminal.textContent += "\n$ " + line + "\n";
+      try {
+        const result = await api("POST", "/api/command", { line });
+        terminal.textContent += result.text;
+        if (!result.text.endsWith("\n")) terminal.textContent += "\n";
+        if (result.scan_id != null) state.scanId = result.scan_id;
+        await loadHistory();
+      } catch (err) {
+        terminal.textContent += "error: " + err.message + "\n";
+      } finally {
+        terminal.scrollTop = terminal.scrollHeight;
+        $("cli-line").value = "";
+        button.disabled = false;
+      }
+    });
+
+    async function boot() {
+      try {
+        const status = await api("GET", "/api/status");
+        state.database = status.database;
+        $("status-line").textContent = status.product + " " + status.version + " · " + status.listen + " · " + status.database;
+        refreshEquivalents();
+        await loadHistory();
+      } catch (err) {
+        $("status-line").textContent = "The local page could not read the database.";
+        setBanner(err.message, false);
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>
