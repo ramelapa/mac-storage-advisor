@@ -1,10 +1,10 @@
 # Mac Storage Advisor
 
-Local, non-destructive inventory of a directory on macOS. `scan` walks a tree and records metadata in SQLite. `duplicates` then hashes those regular files locally. The display name is a placeholder (`PRODUCT_NAME` in `crates/common`). Crate and binary names stay `mac-storage`.
+Local inventory of a directory on macOS. `scan` walks a tree and records metadata in SQLite. `duplicates` then hashes those regular files locally. The display name is `PRODUCT_NAME` in `crates/common` (`Mac Storage Advisor`). Crate and binary names stay `mac-storage`.
 
-The same binary has two run modes. The command line is `mac-storage scan` and the other report commands. `mac-storage ui` serves a page on `127.0.0.1` with an interactive view and a command-line view. Both use the same database.
+One binary, one database, three ways to use it: the command line, `mac-storage ui` (a page on `127.0.0.1`), and `mac-storage window` (that same page in a native window).
 
-Nothing is uploaded or deleted. Duplicate groups report extra content copies. That number is not bytes the disk will free.
+Nothing is uploaded or permanently deleted. `trash` moves a path only after you confirm it, and only to the operating-system Trash. Duplicate groups report extra content copies. That number is not bytes the disk will free.
 
 ## What works now
 
@@ -19,13 +19,14 @@ Nothing is uploaded or deleted. Duplicate groups report extra content copies. Th
 - `mac-storage duplicates` groups identical regular files from a stored scan (size, then inode, then sample BLAKE3, then full BLAKE3). `--verify` re-reads candidates.
 - `mac-storage large-files` lists the largest stored regular files.
 - `mac-storage history` lists previous scans.
+- On macOS, `scan` records iCloud placeholders (`SF_DATALESS`). `analyze` leaves those files out of the stale and Downloads tallies. When allocated size is below logical size, that gap is reported and is not called free space.
 - `mac-storage analyze` reviews stale files, a Downloads folder, and developer-artifact directories.
-- `mac-storage recommendations` prints suggestions only. It does not delete anything.
-- `mac-storage trends` compares totals for the same folder across scans.
-- `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows large files, duplicates, suggestions, history, and trends. Its command-line view runs those same commands. It is not a system shell.
-- `mac-storage trash --path <PATH>` previews a move and does not touch the file. Adding `--confirm "move to trash"` moves that inventoried path to the OS Trash. iCloud placeholders, protected macOS paths, and the scan folder itself are refused.
-- `mac-storage doctor` checks that the database belongs to this app and that SQLite's integrity check passes. It lists recent Trash moves and does not change files.
-- `mac-storage window` opens the same local page in a native window. The page still listens on `127.0.0.1` only.
+- `mac-storage recommendations` prints suggestions only. It does not move files.
+- `mac-storage trends` compares totals for the same folder across scans. Different folders are not subtracted.
+- `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows large files, duplicates, suggestions, history, trends, a database check, and a Trash preview. Its command-line view runs those same commands. It is not a system shell.
+- `mac-storage window` opens that same page in a Tauri window. The listener is still `127.0.0.1`.
+- `mac-storage trash --path <PATH>` previews a move and does not touch the file. Adding `--confirm "move to trash"` moves that inventoried path to the OS Trash. iCloud placeholders, protected macOS paths, unknown paths, and the scan folder itself are refused. A symlink is moved as a link; its target stays.
+- `mac-storage doctor` checks that the database belongs to this app, that the schema matches, and that SQLite's integrity check passes. It lists recent Trash moves and does not change files. A foreign database is left untouched.
 
 ## Planned
 
@@ -35,7 +36,7 @@ Not in the MVP: AI suggestions, cloud sync, cross-device inventory, automatic or
 
 ## Safety
 
-`scan` reads directory listings and metadata. `duplicates` opens file contents only to hash them on this machine. Permanent delete will not exist. A later release may move user-confirmed paths to Trash. Details: [docs/safety-model.md](docs/safety-model.md).
+`scan` reads directory listings and metadata. `duplicates` opens file contents only to hash them on this machine. Permanent delete does not exist. `trash` moves a user-confirmed path to the operating-system Trash, which the OS can restore until it is emptied. Automatic deletion is not implemented. Details: [docs/safety-model.md](docs/safety-model.md).
 
 Protected prefixes `/System`, `/private`, `/bin`, `/sbin`, `/usr`, and `/Library` are skipped only when they fall inside the scan root (for example when the root is `/`). Passing `~/Downloads` scans that folder. Passing exactly `/usr` is refused unless `--allow-protected-roots` is set. An explicit root under a prefix, such as `/usr/local/myproject`, is scanned.
 
@@ -44,11 +45,12 @@ Protected prefixes `/System`, `/private`, `/bin`, `/sbin`, `/usr`, and `/Library
 | Path | Role |
 | --- | --- |
 | `crates/common` | Domain types and the product name |
-| `crates/scanner` | `walkdir` scan, exclusions, metadata |
+| `crates/scanner` | `walkdir` scan, exclusions, metadata, iCloud dataless flag |
 | `crates/duplicates` | BLAKE3 duplicate grouping over stored regular files |
+| `crates/analyze` | Stale files, Downloads, artifact trees, suggestions, trends, placeholder and extent notes |
 | `crates/storage` | SQLite via `rusqlite` (bundled) and migrations |
 | `crates/remediate` | Confirmed move to the OS Trash |
-| `apps/cli` | `mac-storage` binary: command line and the local page |
+| `apps/cli` | `mac-storage` binary: command line, local page, and native window |
 
 The scanner does not depend on storage. `walkdir` is used instead of `ignore` so symlink policy and the exclusion language stay explicit. Diagram and rules: [docs/architecture.md](docs/architecture.md).
 
@@ -66,9 +68,12 @@ Or without installing:
 ```bash
 cargo run -p mac-storage -- scan ~/Downloads
 cargo run -p mac-storage -- ui
+cargo run -p mac-storage -- window
 ```
 
-The database defaults to this app's own data directory and does not replace any other application's database. On macOS that file is `~/Library/Application Support/com.mac-storage.mac-storage-advisor/mac-storage.sqlite`. Override it with `--db` or `MAC_STORAGE_DB`. A path that already points at a different SQLite file is refused.
+On Linux, building `window` needs the WebKit development libraries (`libwebkit2gtk-4.1-dev` and GTK). A Mac already has that webview. GitHub Actions installs the Linux packages before the tests.
+
+The database defaults to this app's own data directory and does not replace any other application's database. On macOS that file is `~/Library/Application Support/com.mac-storage.mac-storage-advisor/mac-storage.sqlite`. On Linux it is `~/.local/share/mac-storage-advisor/mac-storage.sqlite`. Override it with `--db` or `MAC_STORAGE_DB`. A path that already points at a different SQLite file is refused.
 
 ## CLI
 
@@ -148,7 +153,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 
 `duplicates --json` includes `duplicate_groups`, `hard_link_sets`, and `hash_errors`. File bytes are not in that object. `redundant_bytes` counts extra content copies after hard links are collapsed. Zero-byte files are not reported as duplicates.
 
-`analyze` skips build directories and `~$` Office lock files when it counts stale files. Duplicate groups that sit entirely inside those directories are reported as package metadata, not as extra documents. `trends` only subtracts two scans of the same root.
+`analyze` skips build directories and `~$` Office lock files when it counts stale files. Duplicate groups that sit entirely inside those directories are reported as package metadata, not as extra documents. iCloud placeholders are left out of the stale and Downloads tallies, and Trash will not move them. `trends` only subtracts two scans of the same root.
 
 ## Development
 
@@ -162,7 +167,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.6 checks the local database and opens the existing page in a native window. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
+v0.6 is the current release. It can scan a folder, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page or in a native window. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
 
 ## Limitations
 
@@ -172,9 +177,11 @@ v0.6 checks the local database and opens the existing page in a native window. F
 - Allocated size is not unique physical usage and is not reclaimable space.
 - Birth time may be missing on Linux. It is not replaced with modified time.
 - Exclusion matching is case-sensitive.
-- macOS aliases, iCloud placeholders, APFS clones, and snapshots are not interpreted.
+- On macOS, iCloud placeholders are recorded with `SF_DATALESS`. Their logical size is not treated as local disk usage. Linux scans store that flag as false.
+- An allocated size below the logical size is reported as a sparse, compressed, or shared-extent gap. That gap is not reclaimable space. Clone families and APFS snapshots are not computed.
+- macOS aliases are recorded as normal files. They are not resolved.
 - If the SQLite file sits inside the scan root, a later scan counts it.
-- The local page listens on `127.0.0.1` only and handles one request at a time. A Tauri window is not part of this version.
+- The local page and the native window listen on `127.0.0.1` only. The page handles one request at a time.
 
 ## License
 
