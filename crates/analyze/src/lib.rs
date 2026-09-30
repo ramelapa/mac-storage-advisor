@@ -639,6 +639,86 @@ fn risk_rank(risk: RiskLevel) -> u8 {
     }
 }
 
+/// One folder's stored regular files. `logical_bytes` omits iCloud placeholders.
+/// Neither number is reclaimable space, and directory inode sizes are not added.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FolderTotal {
+    pub path: PathBuf,
+    pub local_files: u64,
+    pub logical_bytes: u64,
+    pub dataless_files: u64,
+    pub dataless_bytes: u64,
+}
+
+/// Group stored regular files under `root` into folder totals.
+///
+/// `depth` is how many path components below the root form a group. A file
+/// directly in the root stays on the root row. Files deeper than `depth` roll
+/// into that ancestor. Placeholder logical size is kept separate.
+pub fn folder_totals(root: &Path, files: &[InventoryFile], depth: u32) -> Vec<FolderTotal> {
+    let depth = depth.max(1);
+    let mut groups: BTreeMap<PathBuf, FolderAccum> = BTreeMap::new();
+    for file in files {
+        let Some(path) = folder_bucket(root, &file.path, depth) else {
+            continue;
+        };
+        let entry = groups.entry(path).or_default();
+        if file.is_dataless {
+            entry.dataless_files += 1;
+            entry.dataless_bytes = entry.dataless_bytes.saturating_add(file.logical_size);
+        } else {
+            entry.local_files += 1;
+            entry.logical_bytes = entry.logical_bytes.saturating_add(file.logical_size);
+        }
+    }
+    let mut folders: Vec<FolderTotal> = groups
+        .into_iter()
+        .map(|(path, accum)| FolderTotal {
+            path,
+            local_files: accum.local_files,
+            logical_bytes: accum.logical_bytes,
+            dataless_files: accum.dataless_files,
+            dataless_bytes: accum.dataless_bytes,
+        })
+        .collect();
+    folders.sort_by(|left, right| {
+        right
+            .logical_bytes
+            .cmp(&left.logical_bytes)
+            .then(right.dataless_bytes.cmp(&left.dataless_bytes))
+            .then(left.path.cmp(&right.path))
+    });
+    folders
+}
+
+#[derive(Default)]
+struct FolderAccum {
+    local_files: u64,
+    logical_bytes: u64,
+    dataless_files: u64,
+    dataless_bytes: u64,
+}
+
+fn folder_bucket(root: &Path, path: &Path, depth: u32) -> Option<PathBuf> {
+    let relative = path.strip_prefix(root).ok()?;
+    let parts: Vec<_> = relative.components().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    if parts.len() == 1 {
+        return Some(root.to_path_buf());
+    }
+    let keep = usize::try_from(depth)
+        .unwrap_or(usize::MAX)
+        .min(parts.len() - 1)
+        .max(1);
+    let mut bucket = root.to_path_buf();
+    for component in parts.iter().take(keep) {
+        bucket.push(component);
+    }
+    Some(bucket)
+}
+
 fn signed_delta(newest: u64, previous: u64) -> i64 {
     let newest = i64::try_from(newest).unwrap_or(i64::MAX);
     let previous = i64::try_from(previous).unwrap_or(i64::MAX);
@@ -922,5 +1002,51 @@ mod tests {
             .find(|item| item.root.ends_with("Documents"))
             .unwrap();
         assert_eq!(documents.logical_delta, None);
+    }
+
+    #[test]
+    fn folder_totals_roll_children_and_keep_placeholders_separate() {
+        let root = Path::new("/tmp/scan");
+        let mut cloud = file("/tmp/scan/cloud/old.pdf", 5_000, None, Some("pdf"));
+        cloud.is_dataless = true;
+        let files = vec![
+            file("/tmp/scan/notes.txt", 5, None, Some("txt")),
+            file("/tmp/scan/sub/b.txt", 30, None, Some("txt")),
+            file("/tmp/scan/sub/nested/c.txt", 7, None, Some("txt")),
+            file("/tmp/scan/other/d.txt", 2, None, Some("txt")),
+            cloud,
+            file("/tmp/elsewhere/nope.txt", 100, None, Some("txt")),
+        ];
+        let shallow = folder_totals(root, &files, 1);
+        assert_eq!(shallow.len(), 4);
+        let sub = shallow
+            .iter()
+            .find(|row| row.path.ends_with("sub"))
+            .unwrap();
+        assert_eq!(sub.logical_bytes, 37);
+        assert_eq!(sub.local_files, 2);
+        assert_eq!(sub.dataless_files, 0);
+        let here = shallow.iter().find(|row| row.path == root).unwrap();
+        assert_eq!(here.logical_bytes, 5);
+        assert_eq!(here.local_files, 1);
+        let cloud_row = shallow
+            .iter()
+            .find(|row| row.path.ends_with("cloud"))
+            .unwrap();
+        assert_eq!(cloud_row.logical_bytes, 0);
+        assert_eq!(cloud_row.dataless_bytes, 5_000);
+        assert_eq!(cloud_row.dataless_files, 1);
+        assert!(shallow.iter().all(|row| !row.path.ends_with("nope.txt")));
+        assert!(shallow[0].logical_bytes >= shallow[1].logical_bytes);
+
+        let deep = folder_totals(root, &files, 2);
+        let nested = deep
+            .iter()
+            .find(|row| row.path.ends_with("nested"))
+            .unwrap();
+        assert_eq!(nested.logical_bytes, 7);
+        let sub_only = deep.iter().find(|row| row.path.ends_with("sub")).unwrap();
+        assert_eq!(sub_only.logical_bytes, 30);
+        assert_eq!(sub_only.local_files, 1);
     }
 }

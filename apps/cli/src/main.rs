@@ -4,6 +4,7 @@
 
 mod advise;
 mod doctor;
+mod folders;
 mod query;
 mod report;
 mod size;
@@ -43,6 +44,7 @@ Examples:
   mac-storage duplicates
   mac-storage duplicates --verify --json
   mac-storage large-files --limit 20
+  mac-storage folders --depth 1
   mac-storage history
   mac-storage analyze
   mac-storage recommendations
@@ -79,6 +81,8 @@ enum Command {
     Duplicates(query::DuplicatesArgs),
     /// List the largest regular files from a stored scan.
     LargeFiles(query::LargeArgs),
+    /// Group stored regular files into folder totals. Does not read file contents.
+    Folders(folders::FolderArgs),
     /// List scans already stored in the local database.
     History(query::HistoryArgs),
     /// Review stale files, Downloads, and developer-artifact directories.
@@ -155,6 +159,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Scan(args) => scan_command(args),
         Command::Duplicates(args) => query::duplicates_command(args),
         Command::LargeFiles(args) => query::large_files_command(args),
+        Command::Folders(args) => folders::folders_command(args),
         Command::History(args) => query::history_command(args),
         Command::Analyze(args) => advise::analyze_command(args),
         Command::Recommendations(args) => advise::recommendations_command(args),

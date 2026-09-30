@@ -18,12 +18,13 @@ Nothing is uploaded or permanently deleted. `trash` moves a path only after you 
 - `--json` prints a stable summary plus error path and message. File contents are not included.
 - `mac-storage duplicates` groups identical regular files from a stored scan (size, then inode, then sample BLAKE3, then full BLAKE3). `--verify` re-reads candidates.
 - `mac-storage large-files` lists the largest stored regular files.
+- `mac-storage folders` groups those stored regular files by folder. Files deeper than `--depth` roll into that ancestor. iCloud placeholder bytes stay separate. The totals are not free space, and directory inode sizes are not included.
 - `mac-storage history` lists previous scans.
 - On macOS, `scan` records iCloud placeholders (`SF_DATALESS`). `analyze` leaves those files out of the stale and Downloads tallies. When allocated size is below logical size, that gap is reported and is not called free space.
 - `mac-storage analyze` reviews stale files, a Downloads folder, and developer-artifact directories.
 - `mac-storage recommendations` prints suggestions only. It does not move files.
 - `mac-storage trends` compares totals for the same folder across scans. Different folders are not subtracted.
-- `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows large files, duplicates, suggestions, history, trends, a database check, and a Trash preview. Its command-line view runs those same commands. It is not a system shell.
+- `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows folder totals, large files, duplicates, suggestions, history, trends, a database check, and a Trash preview. Its command-line view runs those same commands. It is not a system shell.
 - `mac-storage window` opens that same page in a Tauri window. The listener is still `127.0.0.1`.
 - `mac-storage trash --path <PATH>` previews a move and does not touch the file. Adding `--confirm "move to trash"` moves that inventoried path to the OS Trash. iCloud placeholders, protected macOS paths, unknown paths, and the scan folder itself are refused. A symlink is moved as a link; its target stays.
 - `mac-storage doctor` checks that the database belongs to this app, that the schema matches, and that SQLite's integrity check passes. It lists recent Trash moves and does not change files. A foreign database is left untouched.
@@ -84,6 +85,7 @@ mac-storage scan <PATH> --exclude node_modules --exclude target --min-size 1MiB
 mac-storage duplicates
 mac-storage duplicates --verify --json
 mac-storage large-files --limit 20
+mac-storage folders --depth 1
 mac-storage history
 mac-storage analyze
 mac-storage recommendations
@@ -117,7 +119,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -167,12 +169,13 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.6 is the current release. It can scan a folder, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page or in a native window. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
+v0.7 is the current release. It can scan a folder, show which child folders hold the stored bytes, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page or in a native window. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
 
 ## Limitations
 
 - Single-threaded. `--threads` does not parallelize.
 - The whole scan is held in memory, then inserted in one transaction.
+- A directory row still stores that directory's own inode size. Folder totals are computed from stored regular files when `folders` runs. Files omitted by `--min-size` are not in that rollup.
 - Logical bytes count each hard-link path separately.
 - Allocated size is not unique physical usage and is not reclaimable space.
 - Birth time may be missing on Linux. It is not replaced with modified time.

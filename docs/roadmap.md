@@ -1,6 +1,6 @@
 # Roadmap
 
-v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window. v0.7 groups stored files into folder totals.
 
 ## v0.1 — Foundation (this version)
 
@@ -56,6 +56,14 @@ Done:
 
 - `mac-storage doctor` checks product identity, schema version, and SQLite integrity, and lists recent Trash moves
 - `mac-storage window` opens the existing local page in a Tauri window on `127.0.0.1`
+
+### v0.7
+
+Done:
+
+- `mac-storage folders` rolls stored regular files into folder totals
+- Placeholder bytes stay separate from local bytes
+- Directory inode sizes stay on the directory row and are not added to the rollup
 
 ## Future / Deferred
 

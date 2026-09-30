@@ -107,6 +107,10 @@ enum PageCommand {
         limit: u64,
         min_size: u64,
     },
+    Folders {
+        scan: Option<i64>,
+        depth: u32,
+    },
     History {
         limit: u64,
     },
@@ -248,6 +252,7 @@ fn dispatch(app: &App, method: &str, url: &str, host: Option<&str>, body: &[u8])
         ("GET", "/api/status") => status(app),
         ("GET", "/api/history") => history(app, &query),
         ("GET", "/api/large-files") => large_files(app, &query),
+        ("GET", "/api/folders") => folders(app, &query),
         ("GET", "/api/analyze") => review(app, &query, false),
         ("GET", "/api/recommendations") => review(app, &query, true),
         ("GET", "/api/trends") => trends(app, &query),
@@ -288,6 +293,20 @@ fn status(app: &App) -> Result<Vec<u8>, Error> {
 fn history(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
     let limit = query_u64(query, "limit", 20)?;
     to_json(&query::run_history(Some(&app.database), limit)?)
+}
+
+fn folders(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
+    let depth = match query.get("depth").map(String::as_str) {
+        Some(value) if !value.trim().is_empty() => value
+            .parse::<u32>()
+            .map_err(|_| Error::Usage("--depth must be an integer".into()))?,
+        _ => 1,
+    };
+    to_json(&crate::folders::run_folders(
+        Some(app.database.as_path()),
+        query_i64(query, "scan")?,
+        depth,
+    )?)
 }
 
 fn large_files(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
@@ -419,6 +438,14 @@ fn execute(app: &App, parsed: ParsedCommand) -> Result<CommandResult, Error> {
             let report = query::run_large_files(db, scan, limit, min_size)?;
             finish(parsed.json, &report, query::format_large(&report))
         }
+        PageCommand::Folders { scan, depth } => {
+            let report = crate::folders::run_folders(db, scan, depth)?;
+            finish(
+                parsed.json,
+                &report,
+                crate::folders::format_folders(&report),
+            )
+        }
         PageCommand::History { limit } => {
             let report = query::run_history(db, limit)?;
             finish(parsed.json, &report, query::format_history(&report))
@@ -507,6 +534,7 @@ Mac Storage Advisor page commands (not a system shell):
   scan <PATH> [--exclude NAME] [--min-size SIZE] [--json]
   duplicates [--scan ID] [--verify] [--json]
   large-files [--scan ID] [--limit N] [--min-size SIZE] [--json]
+  folders [--scan ID] [--depth N] [--json]
   history [--limit N] [--json]
   analyze [--scan ID] [--older-than DAYS] [--json]
   recommendations [--scan ID] [--older-than DAYS] [--json]
@@ -538,6 +566,7 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
     let mut verify = false;
     let mut limit = 20u64;
     let mut older_than = 180u64;
+    let mut depth = 1u32;
     let mut trash_paths = Vec::new();
     let mut confirm: Option<String> = None;
     let mut positionals = Vec::new();
@@ -579,6 +608,12 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
             "--scan" => {
                 let raw = take_value(&mut index)?;
                 scan = Some(parse_i64(&raw, "--scan")?);
+            }
+            "--depth" => {
+                let raw = take_value(&mut index)?;
+                depth = raw
+                    .parse::<u32>()
+                    .map_err(|_| Error::Usage("--depth must be an integer".into()))?;
             }
             "--limit" => {
                 let raw = take_value(&mut index)?;
@@ -644,6 +679,10 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
                 limit,
                 min_size,
             }
+        }
+        "folders" => {
+            reject_positionals(verb, &positionals)?;
+            PageCommand::Folders { scan, depth }
         }
         "history" => {
             reject_positionals(verb, &positionals)?;

@@ -13,6 +13,7 @@ cargo run -p mac-storage -- scan /path/to/fixture
 cargo run -p mac-storage -- scan /path/to/fixture --json
 cargo run -p mac-storage -- duplicates --json
 cargo run -p mac-storage -- large-files
+cargo run -p mac-storage -- folders --depth 1
 cargo run -p mac-storage -- history
 cargo run -p mac-storage -- analyze
 cargo run -p mac-storage -- recommendations

@@ -1973,7 +1973,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "mac-storage"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "mac-storage-analyze",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "mac-storage-analyze"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "mac-storage-common",
  "serde",
@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "mac-storage-common"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -2010,7 +2010,7 @@ dependencies = [
 
 [[package]]
 name = "mac-storage-duplicates"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "serde",
@@ -2018,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "mac-storage-remediate"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "mac-storage-scanner",
  "trash",
@@ -2026,7 +2026,7 @@ dependencies = [
 
 [[package]]
 name = "mac-storage-scanner"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "mac-storage-common",
  "thiserror 2.0.21",
@@ -2036,7 +2036,7 @@ dependencies = [
 
 [[package]]
 name = "mac-storage-storage"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "directories",
  "mac-storage-common",

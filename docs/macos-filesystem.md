@@ -7,7 +7,7 @@ The product target is macOS and APFS. The scanner is portable enough to test on 
 | Object | Behavior |
 | --- | --- |
 | Regular file | Metadata recorded. Contents not read. |
-| Directory | Entered unless excluded. Its own inode size is stored, not a rollup. |
+| Directory | Entered unless excluded. Its own inode size is stored, not a rollup. `mac-storage folders` computes a rollup from stored regular files when asked. |
 | Symbolic link | Recorded, not followed. Relative `readlink` text is stored as returned. Broken if `stat` of the target returns not-found. A loop returns a kernel error and is not treated as a hang. |
 | Symlink as the scan root | Refused. Pass the real directory. |
 | Hard link | Each path is a row. Inode and device are stored so a later pass can group them. |

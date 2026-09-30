@@ -8,7 +8,7 @@ Three different numbers show up in disk tools. This project stores the first two
 | Allocated size | Unix `st_blocks * 512` when that field exists. | Stored separately. `None` when the platform cannot report it. Never copied from the logical size. |
 | Reclaimable space | Bytes that would become free if a path were removed, after clones, hard links, and snapshots. | Not computed. Do not treat either stored size as reclaimable. |
 
-Hard links add their logical size once per path in scan totals. APFS clones can share extents, so allocated size can overstate unique usage. Sparse files can have a logical size larger than the allocated size. Directory `logical_size` is the directory inode's size, not a rollup of children.
+Hard links add their logical size once per path in scan totals. APFS clones can share extents, so allocated size can overstate unique usage. Sparse files can have a logical size larger than the allocated size. Directory `logical_size` is the directory inode's size, not a rollup of children. `mac-storage folders` computes that rollup from stored regular files when the command runs. It does not rewrite the directory row.
 
 Birth time is `Metadata::created`. On macOS this is usually the APFS birth time. On Linux it is often unavailable; when it is missing the column is NULL. Modified time is not written into the birth-time column.
 

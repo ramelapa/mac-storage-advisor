@@ -197,6 +197,15 @@
 
       <section class="panel">
         <div class="row">
+          <h2>Folders</h2>
+          <button type="button" id="load-folders" class="ghost">Load</button>
+        </div>
+        <p class="note">Stored regular files grouped one level under the scan folder. Nested files roll into that child. These totals are not free space, and iCloud placeholders are counted apart from local bytes.</p>
+        <div id="folders-body"><p class="empty">Load folder totals for the selected scan.</p></div>
+      </section>
+
+      <section class="panel">
+        <div class="row">
           <h2>Largest files</h2>
           <button type="button" id="load-large" class="ghost">Load</button>
         </div>
@@ -329,6 +338,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         "mac-storage scan " + shellQuote(path) + db,
         "mac-storage duplicates" + db,
         "mac-storage large-files --limit 20" + db,
+        "mac-storage folders --depth 1" + db,
         "mac-storage history" + db,
         "mac-storage analyze" + db,
         "mac-storage recommendations" + db,
@@ -525,12 +535,41 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       body.replaceChildren(el("p", "note", "Selected scan " + scan.id + " · " + scan.root + " · " + bytes(scan.logical_bytes) + " logical."));
       setBanner("Selected scan " + scan.id + ".", true);
       await loadLarge();
+      await loadFolders();
     }
 
     async function loadHistory() {
       const report = await api("GET", "/api/history?limit=20");
       renderHistory(report);
       return report;
+    }
+
+    function renderFolders(report) {
+      const host = $("folders-body");
+      host.replaceChildren();
+      const folders = report.folders || [];
+      if (!folders.length) {
+        host.append(el("p", "empty", "No stored regular files in this scan."));
+        return;
+      }
+      const list = el("ul");
+      for (const item of folders) {
+        const row = el("li");
+        let meta = bytes(item.logical_bytes) + " local · " + item.local_files + " files";
+        if (item.dataless_files) {
+          meta += " · " + bytes(item.dataless_bytes) + " not on this Mac";
+        }
+        row.append(el("div", "path", item.path));
+        row.append(el("div", "meta", meta));
+        list.append(row);
+      }
+      host.append(list);
+    }
+
+    async function loadFolders() {
+      if (state.scanId == null) throw new Error("Scan a folder or select a scan first.");
+      const report = await api("GET", "/api/folders?scan=" + state.scanId + "&depth=1");
+      renderFolders(report);
     }
 
     async function loadLarge() {
@@ -559,6 +598,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         setBanner("Scan " + report.scan_id + " finished.", true);
         await loadHistory();
         await loadLarge();
+        await loadFolders();
       } catch (err) {
         setBanner(err.message, false);
       } finally {
@@ -568,6 +608,11 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
 
     $("load-large").addEventListener("click", async () => {
       try { await loadLarge(); setBanner("", true); }
+      catch (err) { setBanner(err.message, false); }
+    });
+
+    $("load-folders").addEventListener("click", async () => {
+      try { await loadFolders(); setBanner("", true); }
       catch (err) { setBanner(err.message, false); }
     });
 
