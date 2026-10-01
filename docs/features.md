@@ -2,7 +2,7 @@
 
 Status values: Planned, In Progress, Done, Deferred, Experimental.
 
-Only rows with automated tests are Done. v0.8 packages the window as a Mac app. Scanning and hashing stay one thread.
+Only rows with automated tests are Done. v0.8.1 organizes the interactive results, including a paged duplicate browser. Scanning and hashing stay one thread.
 
 | ID | Feature | Status | Release | Description |
 | --- | --- | --- | --- | --- |
@@ -41,7 +41,8 @@ Only rows with automated tests are Done. v0.8 packages the window as a Mac app. 
 | F-033 | Windows product | Deferred | Future | The engine avoids Unix-only APIs where practical. There is no Windows product. |
 | F-034 | Linux product | Deferred | Future | Tests run on Linux. Packaged support is macOS. |
 | F-035 | Filesystem watcher | Deferred | Future | `notify` is not a dependency. |
-| F-036 | Local interactive UI | Done | 0.4 | `mac-storage ui` listens on `127.0.0.1` and shows scan, duplicate, large-file, suggestion, and trend results. The page also runs the command-line verbs. It does not upload or delete files. |
+| F-036 | Local interactive UI | Done | 0.4 | `mac-storage ui` listens on `127.0.0.1` and shows scan, duplicate, large-file, suggestion, and trend results. The page also runs the command-line verbs. It does not upload or delete files. Results are split into sections so one long page is not the only way to read them. |
 | F-037 | Database check | Done | 0.6 | `mac-storage doctor` confirms the file is this app's database, the schema matches, and SQLite's integrity check passes. It lists recent Trash moves. It does not change user files. A foreign database is left untouched. |
 | F-038 | Folder totals | Done | 0.7 | `mac-storage folders` groups stored regular files under the scan root. Deeper files roll into the ancestor at `--depth`. iCloud placeholder bytes stay separate. Directory inode sizes are not added, and the totals are not reclaimable space. |
 | F-039 | Mac application | Done | 0.8 | `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` on macOS from the same binary. Opening the app, with no advisor command, starts the local window. A subcommand still runs as the command line. The app is not sandboxed, does not request Full Disk Access, and does not listen outside `127.0.0.1`. |
+| F-040 | Duplicate browser | Done | 0.8.1 | The interactive duplicate list can be filtered, sorted, grouped by folder or file type, and paged. Each group stays collapsed until opened. Listing extra copies for Trash does not move them. |

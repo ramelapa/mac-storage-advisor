@@ -24,7 +24,7 @@ Nothing is uploaded or permanently deleted. `trash` moves a path only after you 
 - `mac-storage analyze` reviews stale files, a Downloads folder, and developer-artifact directories.
 - `mac-storage recommendations` prints suggestions only. It does not move files.
 - `mac-storage trends` compares totals for the same folder across scans. Different folders are not subtracted.
-- `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows folder totals, large files, duplicates, suggestions, history, trends, a database check, and a Trash preview. Its command-line view runs those same commands. It is not a system shell.
+- `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows folder totals, large files, duplicates, suggestions, history, trends, a database check, and a Trash preview, one section at a time. Duplicate groups can be filtered, grouped by folder or file type, and paged. Its command-line view runs those same commands. It is not a system shell.
 - `mac-storage window` opens that same page in a Tauri window. The listener is still `127.0.0.1`.
 - On macOS, `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` and a disk image. Opening the app starts that window and uses the same database. A command typed at the binary inside the app still runs as the command line.
 - `mac-storage trash --path <PATH>` previews a move and does not touch the file. Adding `--confirm "move to trash"` moves that inventoried path to the OS Trash. iCloud placeholders, protected macOS paths, unknown paths, and the scan folder itself are refused. A symlink is moved as a link; its target stays.
@@ -129,7 +129,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -179,7 +179,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.8 is the current release. It can scan a folder, show which child folders hold the stored bytes, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page, in a native window, or in Mac Storage Advisor.app. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
+v0.8.1 is the current release. It can scan a folder, show which child folders hold the stored bytes, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page, in a native window, or in Mac Storage Advisor.app. A long duplicate list can be filtered and paged instead of scrolled as one block. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
 
 ## Limitations
 

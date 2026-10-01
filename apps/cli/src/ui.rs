@@ -1035,6 +1035,9 @@ mod tests {
         assert_eq!(page.0, 200);
         assert!(page.1.contains("Interactive"));
         assert!(page.1.contains("Command line"));
+        assert!(page.1.contains("By folder"));
+        assert!(page.1.contains("Largest extra copies"));
+        assert!(page.1.contains("data-section=\"duplicates\""));
         assert!(!page.1.contains("<script src="));
 
         let denied = http_host(addr, "GET", "/api/status", "evil.example", "");

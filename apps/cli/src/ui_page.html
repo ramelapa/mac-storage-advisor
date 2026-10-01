@@ -72,7 +72,7 @@
       margin-top: 16px;
     }
     label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-    input, textarea {
+    input, textarea, select {
       width: 100%;
       border: 1px solid var(--line);
       background: #fff;
@@ -148,11 +148,75 @@
     .note { color: var(--muted); font-size: 14px; }
     #cli-equivalents { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
     .hidden { display: none; }
+    .sections, .organize {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .sections button[aria-pressed="true"], .organize button[aria-pressed="true"], .facet[aria-pressed="true"] {
+      background: var(--teal);
+      color: var(--teal-ink);
+      border-color: var(--teal);
+    }
+    .dup-tools, .filter-line {
+      display: grid;
+      grid-template-columns: 1.4fr 0.8fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .filter-line { grid-template-columns: 1fr; }
+    .facets {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .facet {
+      text-align: left;
+      border-radius: 12px;
+      width: 100%;
+      white-space: normal;
+    }
+    .facet b, .facet span { display: block; }
+    .facet span { color: var(--muted); font-size: 13px; }
+    .facet[aria-pressed="true"] span { color: var(--teal-ink); }
+    .group {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      margin-top: 8px;
+      background: #fff;
+      padding: 0 12px 4px;
+    }
+    .group summary {
+      cursor: pointer;
+      padding: 10px 0;
+    }
+    .group summary .meta { display: block; }
+    .group > button { margin: 4px 0 8px; }
+    .group summary b { font-weight: 600; }
+    .pager {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-top: 12px;
+    }
+    .path-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 0;
+      border-top: 1px solid var(--line);
+    }
+    .path-line .path { flex: 1; }
+    li .path-line { border-top: 0; padding-top: 0; }
     @media (max-width: 800px) {
       h1 { font-size: 32px; }
-      .form, .stats, .prompt { grid-template-columns: 1fr; }
+      .form, .stats, .prompt, .dup-tools { grid-template-columns: 1fr; }
       .modes { display: grid; grid-template-columns: 1fr 1fr; }
-      .row { align-items: flex-start; flex-direction: column; }
+      .row, .pager, .path-line { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
@@ -189,39 +253,89 @@
         <p class="note">The scan records names, sizes, and timestamps. It does not read file contents, upload anything, or delete anything.</p>
       </form>
 
-      <section class="panel" id="overview">
+      <nav class="sections" aria-label="Results">
+        <button type="button" data-section="overview" aria-pressed="true">Overview</button>
+        <button type="button" data-section="folders" aria-pressed="false">Folders</button>
+        <button type="button" data-section="largest" aria-pressed="false">Largest</button>
+        <button type="button" data-section="duplicates" aria-pressed="false">Duplicates</button>
+        <button type="button" data-section="suggestions" aria-pressed="false">Suggestions</button>
+        <button type="button" data-section="history" aria-pressed="false">History</button>
+        <button type="button" data-section="trash" aria-pressed="false">Trash</button>
+        <button type="button" data-section="database" aria-pressed="false">Database</button>
+      </nav>
+
+      <section class="panel" id="overview" data-panel="overview">
         <h2>This scan</h2>
         <p class="empty" id="overview-empty">No scan loaded yet. Choose a folder, or pick one from history.</p>
         <div id="overview-body" class="hidden"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel hidden" data-panel="folders">
         <div class="row">
           <h2>Folders</h2>
           <button type="button" id="load-folders" class="ghost">Load</button>
         </div>
         <p class="note">Stored regular files grouped one level under the scan folder. Nested files roll into that child. These totals are not free space, and iCloud placeholders are counted apart from local bytes.</p>
+        <div class="filter-line">
+          <div>
+            <label for="folder-search">Filter folders</label>
+            <input id="folder-search" placeholder="Documents, Downloads" autocomplete="off">
+          </div>
+        </div>
         <div id="folders-body"><p class="empty">Load folder totals for the selected scan.</p></div>
       </section>
 
-      <section class="panel">
+      <section class="panel hidden" data-panel="largest">
         <div class="row">
           <h2>Largest files</h2>
           <button type="button" id="load-large" class="ghost">Load</button>
         </div>
+        <div class="filter-line">
+          <div>
+            <label for="large-search">Filter files</label>
+            <input id="large-search" placeholder="pdf, Movies" autocomplete="off">
+          </div>
+        </div>
         <div id="large-body"><p class="empty">Load the largest stored files for the selected scan.</p></div>
       </section>
 
-      <section class="panel">
+      <section class="panel hidden" data-panel="duplicates">
         <div class="row">
           <h2>Duplicates</h2>
           <button type="button" id="find-duplicates" class="primary">Find duplicates</button>
         </div>
-        <p class="note">Hashes stay in the local database. Redundant bytes are extra copies, not space the disk will free. Hard links are not counted twice.</p>
+        <p class="note">Hashes stay in the local database. Extra bytes are additional copies, not space the disk will free. Hard links are not counted twice. Listing a path for Trash does not move it.</p>
+        <div class="dup-tools">
+          <div>
+            <label for="dup-search">Filter paths</label>
+            <input id="dup-search" placeholder="invoice, pdf, Downloads" autocomplete="off">
+          </div>
+          <div>
+            <label for="dup-sort">Sort</label>
+            <select id="dup-sort">
+              <option value="redundant">Largest extra copies</option>
+              <option value="size">Largest file</option>
+              <option value="copies">Most copies</option>
+            </select>
+          </div>
+        </div>
+        <div class="organize" role="group" aria-label="Organize duplicates">
+          <button type="button" id="dup-by-groups" aria-pressed="true">All groups</button>
+          <button type="button" id="dup-by-folder" aria-pressed="false">By folder</button>
+          <button type="button" id="dup-by-type" aria-pressed="false">By type</button>
+        </div>
+        <div id="dup-facets"></div>
+        <div class="pager">
+          <p id="dup-summary" class="note"></p>
+          <div>
+            <button type="button" id="dup-prev" class="ghost">Previous</button>
+            <button type="button" id="dup-next" class="ghost">Next</button>
+          </div>
+        </div>
         <div id="dup-body"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel hidden" data-panel="suggestions">
         <div class="row">
           <div>
             <h2>Suggestions</h2>
@@ -233,14 +347,14 @@
         <div id="advice-body"><p class="empty">Suggestions only. Nothing is moved or deleted.</p></div>
       </section>
 
-      <section class="panel" id="doctor-panel">
+      <section class="panel hidden" id="doctor-panel" data-panel="database">
         <h2>Database check</h2>
         <p class="note">Confirms this file belongs to Mac Storage Advisor, the schema matches, and SQLite's integrity check passes. It also lists paths already moved to Trash. It does not change files.</p>
         <button type="button" id="run-doctor" class="primary">Check database</button>
         <div id="doctor-body"><p class="empty">No check yet.</p></div>
       </section>
 
-      <section class="panel" id="trash-panel">
+      <section class="panel hidden" id="trash-panel" data-panel="trash">
         <h2>Move to Trash</h2>
         <p class="note">Name paths from this scan. Nothing moves until the confirmation box says <span class="path">move to trash</span>. iCloud placeholders are refused. This is the operating-system Trash, not a permanent delete.</p>
         <label for="trash-paths">Paths, one per line</label>
@@ -254,7 +368,7 @@
         <div id="trash-plan"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel hidden" data-panel="history">
         <div class="row">
           <h2>History and trends</h2>
           <button type="button" id="load-trends" class="ghost">Compare scans</button>
@@ -279,7 +393,19 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
     </section>
   </main>
   <script>
-    const state = { database: "", scanId: null, root: "" };
+    const state = { database: "", scanId: null, root: "", folders: null, large: null };
+    const dup = {
+      report: null,
+      query: "",
+      sort: "redundant",
+      organize: "groups",
+      facet: "",
+      page: 0,
+      pageSize: 10,
+      facetLimit: 8,
+      expanded: {},
+      showPaths: {}
+    };
 
     function $(id) { return document.getElementById(id); }
 
@@ -349,6 +475,100 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       $("cli-equivalents").textContent = "From a terminal:\n" + lines.join("\n");
     }
 
+    function showSection(name) {
+      document.querySelectorAll("[data-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.panel !== name);
+      });
+      document.querySelectorAll("[data-section]").forEach((button) => {
+        button.setAttribute("aria-pressed", button.dataset.section === name ? "true" : "false");
+      });
+    }
+
+    function parentPath(path) {
+      const normalized = String(path).replaceAll("\\", "/");
+      const cut = normalized.lastIndexOf("/");
+      if (cut <= 0) return cut === 0 ? "/" : normalized;
+      return normalized.slice(0, cut);
+    }
+
+    function baseName(path) {
+      const normalized = String(path).replaceAll("\\", "/");
+      const cut = normalized.lastIndexOf("/");
+      return cut >= 0 ? normalized.slice(cut + 1) : normalized;
+    }
+
+    function extensionOf(path) {
+      const name = baseName(path);
+      const dot = name.lastIndexOf(".");
+      if (dot <= 0) return "no extension";
+      return name.slice(dot + 1).toLowerCase();
+    }
+
+    function shortFolder(path) {
+      const parts = String(path).split("/").filter(Boolean);
+      if (parts.length <= 2) return path || "/";
+      return "…/" + parts.slice(-2).join("/");
+    }
+
+    function leadersOf(group) {
+      return (group.members || []).filter((member) => member.hard_link_leader);
+    }
+
+    function extraLeaders(group) {
+      return leadersOf(group).slice(1);
+    }
+
+    function groupTitle(group) {
+      const names = [...new Set(leadersOf(group).map((member) => baseName(member.path)))];
+      if (names.length === 1) return names[0];
+      return (group.members || []).length + " paths";
+    }
+
+    function groupKey(group) {
+      return group.full_hash || groupTitle(group) + ":" + group.logical_size;
+    }
+
+    function matchesQuery(group, query) {
+      if (!query) return true;
+      return (group.members || []).some((member) => String(member.path).toLowerCase().includes(query));
+    }
+
+    function memberFacet(member) {
+      if (dup.organize === "folder") return parentPath(member.path);
+      if (dup.organize === "type") return extensionOf(member.path);
+      return "";
+    }
+
+    function facetRows(groups) {
+      const map = new Map();
+      for (const group of groups) {
+        const seen = new Set();
+        const extraIds = new Set(extraLeaders(group).map((member) => String(member.path)));
+        for (const member of group.members || []) {
+          const key = memberFacet(member);
+          if (!key) continue;
+          const row = map.get(key) || { key, bytes: 0, groups: 0 };
+          if (extraIds.has(String(member.path))) row.bytes += Number(group.logical_size) || 0;
+          if (!seen.has(key)) {
+            row.groups += 1;
+            seen.add(key);
+          }
+          map.set(key, row);
+        }
+      }
+      return [...map.values()].sort((a, b) => b.bytes - a.bytes || String(a.key).localeCompare(String(b.key)));
+    }
+
+    function sortedGroups(groups) {
+      const copy = groups.slice();
+      copy.sort((a, b) => {
+        if (dup.sort === "size") return Number(b.logical_size) - Number(a.logical_size);
+        if (dup.sort === "copies") return leadersOf(b).length - leadersOf(a).length || Number(b.redundant_bytes) - Number(a.redundant_bytes);
+        return Number(b.redundant_bytes) - Number(a.redundant_bytes) || Number(b.logical_size) - Number(a.logical_size);
+      });
+      return copy;
+    }
+
     function showMode(which) {
       const ui = which === "ui";
       $("view-ui").classList.toggle("hidden", !ui);
@@ -391,44 +611,192 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
     }
 
     function renderLarge(report) {
+      state.large = report;
       const host = $("large-body");
       host.replaceChildren();
-      if (!report.files.length) {
-        host.append(el("p", "empty", "No stored regular files matched."));
+      const query = $("large-search").value.trim().toLowerCase();
+      const files = (report.files || []).filter((file) => !query || String(file.path).toLowerCase().includes(query));
+      if (!files.length) {
+        host.append(el("p", "empty", report.files && report.files.length ? "No files match that filter." : "No stored regular files matched."));
         return;
       }
       const list = el("ul");
-      for (const file of report.files) {
+      for (const file of files) {
         const item = el("li");
         item.append(el("div", "meta", bytes(file.logical_size) + " · " + file.logical_size + " bytes"));
-        item.append(el("div", "path", file.path));
+        const line = el("div", "path-line");
+        line.append(el("div", "path", file.path));
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "ghost";
+        add.textContent = "Add to Trash list";
+        add.addEventListener("click", () => addTrashPath(file.path));
+        line.append(add);
+        item.append(line);
         list.append(item);
       }
       host.append(list);
     }
 
-    function renderDuplicates(report) {
+    function paintDuplicates() {
       const host = $("dup-body");
+      const facets = $("dup-facets");
+      const summary = $("dup-summary");
       host.replaceChildren();
-      const redundant = (report.duplicate_groups || []).reduce((sum, group) => sum + group.redundant_bytes, 0);
-      host.append(el("p", "note", report.duplicate_groups.length + " groups · " + report.hard_link_sets.length + " hard-link sets · redundant " + bytes(redundant) + " · hash errors " + report.hash_errors.length));
-      if (!report.duplicate_groups.length) {
-        host.append(el("p", "empty", "No duplicate content in this scan."));
+      facets.replaceChildren();
+      for (const mode of ["groups", "folder", "type"]) {
+        const id = mode === "groups" ? "dup-by-groups" : mode === "folder" ? "dup-by-folder" : "dup-by-type";
+        $(id).setAttribute("aria-pressed", dup.organize === mode ? "true" : "false");
       }
-      const list = el("ul");
-      for (const group of report.duplicate_groups) {
-        const item = el("li");
-        item.append(el("div", "meta", bytes(group.logical_size) + " each · redundant " + bytes(group.redundant_bytes)));
-        for (const member of group.members) {
-          const role = member.hard_link_leader ? "copy" : "hard link";
-          item.append(el("div", "path", role + "  " + member.path));
+      const tab = document.querySelector('[data-section="duplicates"]');
+      const report = dup.report;
+      if (!report) {
+        tab.textContent = "Duplicates";
+        summary.textContent = "Find duplicates to group identical files.";
+        $("dup-prev").disabled = true;
+        $("dup-next").disabled = true;
+        host.append(el("p", "empty", "No duplicate pass yet."));
+        return;
+      }
+      const groups = report.duplicate_groups || [];
+      tab.textContent = groups.length ? "Duplicates (" + groups.length + ")" : "Duplicates";
+      const query = dup.query.trim().toLowerCase();
+      const searched = groups.filter((group) => matchesQuery(group, query));
+      let rows = [];
+      if (dup.organize !== "groups") {
+        rows = facetRows(searched);
+        const visible = rows.slice(0, dup.facetLimit);
+        if (!rows.length) {
+          facets.append(el("p", "empty", "No extra copies match that filter."));
         }
-        list.append(item);
+        for (const row of visible) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "facet";
+          button.setAttribute("aria-pressed", dup.facet === row.key ? "true" : "false");
+          const label = dup.organize === "folder" ? shortFolder(row.key) : (row.key === "no extension" ? row.key : "." + row.key);
+          button.title = row.key;
+          button.append(el("b", null, label));
+          const amount = row.bytes ? bytes(row.bytes) + " extra" : "kept copies";
+          button.append(el("span", null, row.groups + " groups · " + amount));
+          button.addEventListener("click", () => {
+            dup.facet = dup.facet === row.key ? "" : row.key;
+            dup.page = 0;
+            paintDuplicates();
+          });
+          facets.append(button);
+        }
+        if (rows.length > dup.facetLimit) {
+          const more = document.createElement("button");
+          more.type = "button";
+          more.className = "ghost";
+          more.textContent = "Show " + (rows.length - dup.facetLimit) + " more";
+          more.addEventListener("click", () => {
+            dup.facetLimit += 8;
+            paintDuplicates();
+          });
+          facets.append(more);
+        }
       }
-      host.append(list);
-      for (const error of report.hash_errors || []) {
-        host.append(el("p", "banner", error.path + ": " + error.message));
+      const matched = searched.filter((group) => {
+        if (!dup.facet) return true;
+        return (group.members || []).some((member) => memberFacet(member) === dup.facet);
+      });
+      const ordered = sortedGroups(matched);
+      const pages = Math.max(1, Math.ceil(ordered.length / dup.pageSize));
+      if (dup.page > pages - 1) dup.page = pages - 1;
+      if (dup.page < 0) dup.page = 0;
+      const start = dup.page * dup.pageSize;
+      const slice = ordered.slice(start, start + dup.pageSize);
+      const redundant = matched.reduce((sum, group) => sum + (Number(group.redundant_bytes) || 0), 0);
+      const from = ordered.length ? start + 1 : 0;
+      const to = start + slice.length;
+      summary.textContent = ordered.length + " groups · " + bytes(redundant) + " extra · showing " + from + "–" + to;
+      $("dup-prev").disabled = dup.page === 0;
+      $("dup-next").disabled = dup.page >= pages - 1 || !ordered.length;
+      if (!ordered.length) {
+        host.append(el("p", "empty", groups.length ? "No groups match that filter." : "No duplicate content in this scan."));
       }
+      for (const group of slice) host.append(renderDuplicateGroup(group));
+      const sets = report.hard_link_sets || [];
+      if (sets.length) {
+        host.append(el("p", "note", sets.length + " hard-link sets. Extra names share one copy, so they are not listed as duplicates."));
+      }
+      const errors = report.hash_errors || [];
+      if (errors.length) {
+        host.append(el("p", "note", errors.length + " files could not be hashed."));
+        for (const error of errors.slice(0, 5)) {
+          host.append(el("p", "banner", error.path + ": " + error.message));
+        }
+      }
+    }
+
+    function renderDuplicateGroup(group) {
+      const key = groupKey(group);
+      const details = document.createElement("details");
+      details.className = "group";
+      details.open = !!dup.expanded[key];
+      details.addEventListener("toggle", () => { dup.expanded[key] = details.open; });
+      const summary = document.createElement("summary");
+      const copies = leadersOf(group).length;
+      summary.append(el("b", null, groupTitle(group)));
+      summary.append(el("span", "meta", bytes(group.logical_size) + " each · " + copies + " copies · " + bytes(group.redundant_bytes) + " extra"));
+      details.append(summary);
+      const members = group.members || [];
+      const showAll = !!dup.showPaths[key] || members.length <= 8;
+      const visible = showAll ? members : members.slice(0, 8);
+      const first = leadersOf(group)[0];
+      for (const member of visible) {
+        const line = el("div", "path-line");
+        const text = el("div");
+        let role = "hard link";
+        if (member.hard_link_leader) {
+          role = first && member.file_id === first.file_id && String(member.path) === String(first.path) ? "first copy" : "extra copy";
+        }
+        text.append(el("div", "meta", role));
+        text.append(el("div", "path", member.path));
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "ghost";
+        add.textContent = "Add to Trash list";
+        add.addEventListener("click", () => addTrashPath(String(member.path)));
+        line.append(text, add);
+        details.append(line);
+      }
+      if (!showAll) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "ghost";
+        more.textContent = "Show all " + members.length + " paths";
+        more.addEventListener("click", () => {
+          dup.showPaths[key] = true;
+          dup.expanded[key] = true;
+          paintDuplicates();
+        });
+        details.append(more);
+      }
+      const extras = extraLeaders(group);
+      if (extras.length) {
+        const listExtras = document.createElement("button");
+        listExtras.type = "button";
+        listExtras.className = "ghost";
+        listExtras.textContent = "List " + extras.length + " extra " + (extras.length === 1 ? "copy" : "copies");
+        listExtras.addEventListener("click", () => {
+          for (const member of extras) addTrashPath(String(member.path), true);
+          setBanner("Listed " + extras.length + " extra copies for Trash. Nothing was moved.", true);
+        });
+        details.append(listExtras);
+      }
+      return details;
+    }
+
+    function renderDuplicates(report) {
+      dup.report = report;
+      dup.page = 0;
+      dup.facet = "";
+      dup.expanded = {};
+      dup.showPaths = {};
+      paintDuplicates();
     }
 
     function renderAdvice(report) {
@@ -533,6 +901,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       const body = $("overview-body");
       body.classList.remove("hidden");
       body.replaceChildren(el("p", "note", "Selected scan " + scan.id + " · " + scan.root + " · " + bytes(scan.logical_bytes) + " logical."));
+      showSection("overview");
       setBanner("Selected scan " + scan.id + ".", true);
       await loadLarge();
       await loadFolders();
@@ -545,11 +914,13 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
     }
 
     function renderFolders(report) {
+      state.folders = report;
       const host = $("folders-body");
       host.replaceChildren();
-      const folders = report.folders || [];
+      const query = $("folder-search").value.trim().toLowerCase();
+      const folders = (report.folders || []).filter((item) => !query || String(item.path).toLowerCase().includes(query));
       if (!folders.length) {
-        host.append(el("p", "empty", "No stored regular files in this scan."));
+        host.append(el("p", "empty", report.folders && report.folders.length ? "No folders match that filter." : "No stored regular files in this scan."));
         return;
       }
       const list = el("ul");
@@ -578,6 +949,44 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       renderLarge(report);
     }
 
+    document.querySelectorAll("[data-section]").forEach((button) => {
+      button.addEventListener("click", () => showSection(button.dataset.section));
+    });
+    $("dup-search").addEventListener("input", () => {
+      dup.query = $("dup-search").value;
+      dup.page = 0;
+      paintDuplicates();
+    });
+    $("dup-sort").addEventListener("change", () => {
+      dup.sort = $("dup-sort").value;
+      dup.page = 0;
+      paintDuplicates();
+    });
+    function setOrganize(mode) {
+      dup.organize = mode;
+      dup.facet = "";
+      dup.page = 0;
+      dup.facetLimit = 8;
+      paintDuplicates();
+    }
+    $("dup-by-groups").addEventListener("click", () => setOrganize("groups"));
+    $("dup-by-folder").addEventListener("click", () => setOrganize("folder"));
+    $("dup-by-type").addEventListener("click", () => setOrganize("type"));
+    $("dup-prev").addEventListener("click", () => {
+      dup.page -= 1;
+      paintDuplicates();
+    });
+    $("dup-next").addEventListener("click", () => {
+      dup.page += 1;
+      paintDuplicates();
+    });
+    $("folder-search").addEventListener("input", () => {
+      if (state.folders) renderFolders(state.folders);
+    });
+    $("large-search").addEventListener("input", () => {
+      if (state.large) renderLarge(state.large);
+    });
+
     $("tab-ui").addEventListener("click", () => showMode("ui"));
     $("tab-cli").addEventListener("click", () => showMode("cli"));
     $("path").addEventListener("input", refreshEquivalents);
@@ -595,6 +1004,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
           min_size: $("min-size").value.trim() || "0"
         });
         renderOverview(report);
+        showSection("overview");
         setBanner("Scan " + report.scan_id + " finished.", true);
         await loadHistory();
         await loadLarge();
@@ -607,12 +1017,12 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
     });
 
     $("load-large").addEventListener("click", async () => {
-      try { await loadLarge(); setBanner("", true); }
+      try { await loadLarge(); showSection("largest"); setBanner("", true); }
       catch (err) { setBanner(err.message, false); }
     });
 
     $("load-folders").addEventListener("click", async () => {
-      try { await loadFolders(); setBanner("", true); }
+      try { await loadFolders(); showSection("folders"); setBanner("", true); }
       catch (err) { setBanner(err.message, false); }
     });
 
@@ -624,6 +1034,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         const report = await api("POST", "/api/duplicates", { scan: state.scanId, verify: false });
         state.scanId = report.scan_id;
         renderDuplicates(report);
+        showSection("duplicates");
         setBanner("Duplicate pass finished for scan " + report.scan_id + ".", true);
       } catch (err) {
         setBanner(err.message, false);
@@ -639,6 +1050,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         const report = await api("GET", "/api/analyze?older_than=" + encodeURIComponent(older) + scan);
         state.scanId = report.scan_id;
         renderAdvice(report);
+        showSection("suggestions");
         setBanner("Suggestions are ready. Nothing was deleted.", true);
       } catch (err) {
         setBanner(err.message, false);
@@ -649,13 +1061,13 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       return $("trash-paths").value.split("\n").map((line) => line.trim()).filter(Boolean);
     }
 
-    function addTrashPath(path) {
+    function addTrashPath(path, quiet) {
       const box = $("trash-paths");
       const lines = trashPaths();
       if (!lines.includes(path)) lines.push(path);
       box.value = lines.join("\n");
       showMode("ui");
-      $("trash-panel").scrollIntoView({ block: "nearest" });
+      if (!quiet) setBanner("Added to the Trash list. Nothing was moved.", true);
     }
 
     function renderTrash(report) {
@@ -770,6 +1182,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         state.database = status.database;
         $("status-line").textContent = status.product + " " + status.version + " · " + status.listen + " · " + status.database;
         refreshEquivalents();
+        paintDuplicates();
         await loadHistory();
       } catch (err) {
         $("status-line").textContent = "The local page could not read the database.";
