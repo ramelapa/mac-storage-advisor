@@ -16,16 +16,17 @@ if ! cargo tauri --version >/dev/null 2>&1; then
   cargo install tauri-cli --version 2.12.0 --locked
 fi
 
-config_args=()
-if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-  escaped="${APPLE_SIGNING_IDENTITY//\\/\\\\}"
-  escaped="${escaped//\"/\\\"}"
-  config_args=(--config "{\"bundle\":{\"macOS\":{\"signingIdentity\":\"${escaped}\"}}}")
-fi
-
+# macOS still ships Bash 3.2. With `set -u`, expanding an empty array is an error,
+# so the signing override is a separate command instead of an optional argument.
 (
   cd "$root/apps/cli"
-  cargo tauri build --bundles app,dmg "${config_args[@]}"
+  if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+    escaped="${APPLE_SIGNING_IDENTITY//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    cargo tauri build --bundles app,dmg --config "{\"bundle\":{\"macOS\":{\"signingIdentity\":\"${escaped}\"}}}"
+  else
+    cargo tauri build --bundles app,dmg
+  fi
 )
 
 bundle_dir="$root/target/release/bundle/macos"
