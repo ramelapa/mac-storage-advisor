@@ -24,7 +24,7 @@ The product target is macOS and APFS. The scanner is portable enough to test on 
 - **iCloud dataless files.** On macOS, `SF_DATALESS` is stored. A placeholder is left out of stale and Downloads totals. Trash will not move it, because that can remove the copy in iCloud. Linux scans record the flag as false.
 - **Resource forks and extended attributes.** Not read.
 - **Case folding.** APFS default volumes are case-insensitive. Exclusion matching is case-sensitive. `Node_Modules` does not match an exclusion of `node_modules`.
-- **Privacy (TCC).** macOS can deny access to Desktop, Documents, Downloads, or Mail even when Unix permissions look open. That denial is a recorded scan error if the OS returns one. This tool does not request Full Disk Access.
+- **Privacy (TCC).** macOS can deny access to Desktop, Documents, Downloads, or Mail even when Unix permissions look open. That denial is a recorded scan error if the OS returns one. This tool does not request Full Disk Access. The Mac app's `Info.plist` explains Desktop, Documents, Downloads, and removable-volume access if macOS asks. Those strings do not grant access.
 - **Birth time on Linux CI.** `Metadata::created` may be `None`. The scanner keeps that `None`. It does not backfill from `mtime`.
 
 ## Allocated size

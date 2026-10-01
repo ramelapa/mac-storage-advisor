@@ -30,13 +30,15 @@ Local, non-destructive storage inventory. `scan` records metadata and does not r
 `duplicates` hashes stored regular files locally with BLAKE3. Hashes stay in the local database.
 Nothing is uploaded or deleted. Redundant bytes are not a promise of free disk space.
 
-Two ways to run the same local database:
+The command line, the local page, and the Mac app use one database:
 
   mac-storage scan ~/Downloads
   mac-storage ui
+  mac-storage window
 
 `ui` serves a page on 127.0.0.1 only. The page has an interactive view and a
-command-line view. Neither one uploads or deletes files.
+command-line view. Neither one uploads or deletes files. Opening
+Mac Storage Advisor.app starts the same window.
 
 Examples:
   mac-storage scan ~/Downloads
@@ -144,8 +146,27 @@ struct ScanArgs {
 }
 
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().collect();
+    let executable = std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    if window::launched_as_mac_app(&args, executable.as_deref()) {
+        return finish(run_mac_app());
+    }
     let cli = Cli::parse();
-    match run(cli) {
+    finish(run(cli))
+}
+
+fn run_mac_app() -> Result<(), Error> {
+    let result = window::window_command(window::WindowArgs::for_app_launch());
+    if let Err(err) = &result {
+        window::report_app_launch_error(&err.to_string());
+    }
+    result
+}
+
+fn finish(result: Result<(), Error>) -> ExitCode {
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err}");

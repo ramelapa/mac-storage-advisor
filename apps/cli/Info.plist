@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Mac Storage Advisor reads Desktop only to measure what is stored there. It does not upload those files.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Mac Storage Advisor reads Documents only to measure what is stored there. It does not upload those files.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Mac Storage Advisor reads Downloads only to measure what is stored there. It does not upload those files.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Mac Storage Advisor reads a removable volume only when you choose it. It does not upload those files.</string>
+</dict>
+</plist>

@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mac-storage doctor` checks product identity, schema version, and SQLite integrity. It lists recent Trash moves. A file that is not this app's database is left unchanged.
 - `mac-storage window` opens the existing local page in a Tauri window. The listener remains `127.0.0.1`.
 - `mac-storage folders` groups stored regular files by folder. Nested files roll into the ancestor selected by `--depth`. iCloud placeholder bytes are listed apart from local bytes. The totals are not reclaimable space, and directory inode sizes are not included.
+- `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` and a disk image on macOS. Opening the app starts the existing local window. The command line is the same binary.
 
 ### Not in this version
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window. v0.7 groups stored files into folder totals.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window. v0.7 groups stored files into folder totals. v0.8 packages that window as a Mac app.
 
 ## v0.1 — Foundation (this version)
 
@@ -64,6 +64,14 @@ Done:
 - `mac-storage folders` rolls stored regular files into folder totals
 - Placeholder bytes stay separate from local bytes
 - Directory inode sizes stay on the directory row and are not added to the rollup
+
+### v0.8
+
+Done:
+
+- `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` and a disk image on macOS
+- Opening the app starts the existing local window. A subcommand on that binary stays a command
+- The app is ad-hoc signed, not sandboxed, and uses the same database as the command line
 
 ## Future / Deferred
 

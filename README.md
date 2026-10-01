@@ -2,7 +2,7 @@
 
 Local inventory of a directory on macOS. `scan` walks a tree and records metadata in SQLite. `duplicates` then hashes those regular files locally. The display name is `PRODUCT_NAME` in `crates/common` (`Mac Storage Advisor`). Crate and binary names stay `mac-storage`.
 
-One binary, one database, three ways to use it: the command line, `mac-storage ui` (a page on `127.0.0.1`), and `mac-storage window` (that same page in a native window).
+One binary, one database, three ways to use it: the command line, `mac-storage ui` (a page on `127.0.0.1`), and `mac-storage window` (that same page in a native window). On a Mac, `scripts/build-mac-app.sh` packages that window as `Mac Storage Advisor.app`. Opening the app starts the window.
 
 Nothing is uploaded or permanently deleted. `trash` moves a path only after you confirm it, and only to the operating-system Trash. Duplicate groups report extra content copies. That number is not bytes the disk will free.
 
@@ -26,6 +26,7 @@ Nothing is uploaded or permanently deleted. `trash` moves a path only after you 
 - `mac-storage trends` compares totals for the same folder across scans. Different folders are not subtracted.
 - `mac-storage ui` opens a local page on `127.0.0.1` (default port 47231). The page scans a folder and shows folder totals, large files, duplicates, suggestions, history, trends, a database check, and a Trash preview. Its command-line view runs those same commands. It is not a system shell.
 - `mac-storage window` opens that same page in a Tauri window. The listener is still `127.0.0.1`.
+- On macOS, `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` and a disk image. Opening the app starts that window and uses the same database. A command typed at the binary inside the app still runs as the command line.
 - `mac-storage trash --path <PATH>` previews a move and does not touch the file. Adding `--confirm "move to trash"` moves that inventoried path to the OS Trash. iCloud placeholders, protected macOS paths, unknown paths, and the scan folder itself are refused. A symlink is moved as a link; its target stays.
 - `mac-storage doctor` checks that the database belongs to this app, that the schema matches, and that SQLite's integrity check passes. It lists recent Trash moves and does not change files. A foreign database is left untouched.
 
@@ -71,6 +72,15 @@ cargo run -p mac-storage -- scan ~/Downloads
 cargo run -p mac-storage -- ui
 cargo run -p mac-storage -- window
 ```
+
+On a Mac, build an app you can open from Finder:
+
+```bash
+./scripts/build-mac-app.sh
+open "target/release/bundle/macos/Mac Storage Advisor.app"
+```
+
+The script is macOS-only. It ad-hoc signs the app so it opens on the machine that built it. Set `APPLE_SIGNING_IDENTITY` to a Developer ID when you want a signature for other Macs. If Gatekeeper refuses an ad-hoc app, right-click the app, choose Open, then Open. The app is not sandboxed and does not request Full Disk Access. It listens on `127.0.0.1` only.
 
 On Linux, building `window` needs the WebKit development libraries (`libwebkit2gtk-4.1-dev` and GTK). A Mac already has that webview. GitHub Actions installs the Linux packages before the tests.
 
@@ -119,7 +129,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -169,7 +179,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.7 is the current release. It can scan a folder, show which child folders hold the stored bytes, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page or in a native window. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
+v0.8 is the current release. It can scan a folder, show which child folders hold the stored bytes, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page, in a native window, or in Mac Storage Advisor.app. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
 
 ## Limitations
 

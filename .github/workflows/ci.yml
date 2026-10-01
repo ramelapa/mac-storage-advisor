@@ -26,3 +26,12 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: cargo test
         run: cargo test --workspace
+
+  mac-app:
+    name: macOS app bundle
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Build Mac Storage Advisor.app
+        run: ./scripts/build-mac-app.sh

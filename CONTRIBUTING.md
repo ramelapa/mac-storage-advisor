@@ -22,7 +22,7 @@ Use synthetic directories under the process temp dir. Do not point tests at a ho
 
 ## Scope of this repository
 
-Scan, duplicate grouping, large-file listing, history, suggestion review, `mac-storage ui`, user-confirmed Trash, `doctor`, and `mac-storage window` are implemented. `blake3` is a dependency of `crates/duplicates`. `tiny_http` serves the localhost page. `tauri` opens that page in a native window. The `trash` crate moves files to the OS Trash and does not permanently delete them. Do not add `notify` or `rayon` until that roadmap item is actually being built. Linux CI installs the WebKit development libraries before `cargo test`.
+Scan, duplicate grouping, large-file listing, history, suggestion review, `mac-storage ui`, user-confirmed Trash, `doctor`, `mac-storage window`, and the macOS app bundle are implemented. `blake3` is a dependency of `crates/duplicates`. `tiny_http` serves the localhost page. `tauri` opens that page in a native window. The `trash` crate moves files to the OS Trash and does not permanently delete them. Do not add `notify` or `rayon` until that roadmap item is actually being built. Linux CI installs the WebKit development libraries before `cargo test`.
 
 Do not add a permanent-delete API. See [docs/safety-model.md](docs/safety-model.md).
 

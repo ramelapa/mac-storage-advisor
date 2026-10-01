@@ -77,7 +77,7 @@ The scan root itself is never dropped by the walk filter.
 - No outbound network client. Paths, names, hashes, and contents are not uploaded. Hashes are computed only by `duplicates`. `mac-storage ui` listens on `127.0.0.1` and refuses a different Host header.
 - No `unsafe` in workspace crates (`forbid(unsafe_code)`).
 - `rusqlite` is built with the `bundled` feature so CI does not need a system SQLite.
-- `blake3` is used by the duplicates crate. `tiny_http` serves the local page. `tauri` opens that page in a native window. The `trash` crate moves a confirmed path to the OS Trash. `rayon` and `notify` are still absent.
+- `blake3` is used by the duplicates crate. `tiny_http` serves the local page. `tauri` opens that page in a native window and, on macOS, packages the same binary as `Mac Storage Advisor.app`. The `trash` crate moves a confirmed path to the OS Trash. `rayon` and `notify` are still absent.
 
 ## Decisions
 

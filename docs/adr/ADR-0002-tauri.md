@@ -1,6 +1,6 @@
 # ADR-0002: Tauri for the future desktop UI
 
-- Status: Accepted. v0.6 opens the localhost page from [ADR-0006](ADR-0006-local-ui.md) in a Tauri window. There is still no second frontend.
+- Status: Accepted. v0.6 opens the localhost page from [ADR-0006](ADR-0006-local-ui.md) in a Tauri window. v0.8 packages that same binary as `Mac Storage Advisor.app`. There is still no second frontend.
 - Date: 2026-09-27
 
 ## Context

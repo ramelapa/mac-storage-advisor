@@ -25,6 +25,8 @@ cargo run -p mac-storage -- doctor
 cargo run -p mac-storage -- window
 ```
 
+On macOS, `./scripts/build-mac-app.sh` writes `target/release/bundle/macos/Mac Storage Advisor.app`. The script installs `tauri-cli` 2.12.0 if `cargo tauri` is missing. `APPLE_SIGNING_IDENTITY` replaces the ad-hoc signature. Linux and Windows machines cannot build this bundle.
+
 `cargo audit` is not part of CI. Run it locally if you want advisory output. Do not fail a release on an advisory that cannot be fixed without abandoning a required crate.
 
 ## Layout
