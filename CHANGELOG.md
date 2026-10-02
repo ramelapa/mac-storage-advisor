@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mac-storage folders` groups stored regular files by folder. Nested files roll into the ancestor selected by `--depth`. iCloud placeholder bytes are listed apart from local bytes. The totals are not reclaimable space, and directory inode sizes are not included.
 - `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` and a disk image on macOS. Opening the app starts the existing local window. The command line is the same binary.
 - The interactive page splits results into sections. Duplicate groups can be filtered, sorted, grouped by folder or file type, and paged. Listing extra copies does not move them.
+- Scan this Mac walks the home folder and shows progress while it runs. The overview chart compares top-level folders and points at cleanup hints. Nothing is moved from the chart.
 
 ### Not in this version
 

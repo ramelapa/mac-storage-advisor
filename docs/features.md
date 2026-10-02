@@ -2,7 +2,7 @@
 
 Status values: Planned, In Progress, Done, Deferred, Experimental.
 
-Only rows with automated tests are Done. v0.8.1 organizes the interactive results, including a paged duplicate browser. Scanning and hashing stay one thread.
+Only rows with automated tests are Done. v0.9.0 scans a home folder with live progress and charts where that space sits. Scanning and hashing stay one thread.
 
 | ID | Feature | Status | Release | Description |
 | --- | --- | --- | --- | --- |
@@ -46,3 +46,4 @@ Only rows with automated tests are Done. v0.8.1 organizes the interactive result
 | F-038 | Folder totals | Done | 0.7 | `mac-storage folders` groups stored regular files under the scan root. Deeper files roll into the ancestor at `--depth`. iCloud placeholder bytes stay separate. Directory inode sizes are not added, and the totals are not reclaimable space. |
 | F-039 | Mac application | Done | 0.8 | `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` on macOS from the same binary. Opening the app, with no advisor command, starts the local window. A subcommand still runs as the command line. The app is not sandboxed, does not request Full Disk Access, and does not listen outside `127.0.0.1`. |
 | F-040 | Duplicate browser | Done | 0.8.1 | The interactive duplicate list can be filtered, sorted, grouped by folder or file type, and paged. Each group stays collapsed until opened. Listing extra copies for Trash does not move them. |
+| F-041 | Mac overview | Done | 0.9.0 | Scan this Mac walks the home folder and updates file and byte counts while the walk runs. The overview chart compares top-level folders and points at unchanged files, developer folders, Library, and Downloads. Those hints are not free space, and the chart does not move files. |

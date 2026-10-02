@@ -1,6 +1,6 @@
 # Roadmap
 
-v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window. v0.7 groups stored files into folder totals. v0.8 packages that window as a Mac app. v0.8.1 makes a long duplicate list easier to review.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window. v0.7 groups stored files into folder totals. v0.8 packages that window as a Mac app. v0.8.1 makes a long duplicate list easier to review. v0.9 shows a home-folder scan in progress and where that space sits.
 
 ## v0.1 — Foundation (this version)
 
@@ -80,6 +80,14 @@ Done:
 - Interactive results are split into Overview, Folders, Largest, Duplicates, Suggestions, History, Trash, and Database
 - Duplicate groups can be filtered, sorted, grouped by folder or type, and paged. A group stays collapsed until it is opened
 - Listing extra copies adds them to the Trash list and does not move them
+
+### v0.9
+
+Done:
+
+- Scan this Mac walks the home folder. System folders such as `/System` are not part of that walk
+- The overview shows a moving progress bar plus the current folder, file count, and logical bytes while the scan runs
+- After the scan, bars compare the largest top-level folders and mark unchanged files, developer folders, Library, and Downloads as worth a look
 
 ## Future / Deferred
 

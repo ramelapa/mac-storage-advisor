@@ -79,8 +79,26 @@ enum WalkItem {
     },
 }
 
+/// Counts and the directory the walk is in. `current_dir` is empty when paths are redacted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkProgress {
+    pub directories: u64,
+    pub files: u64,
+    pub logical_bytes: u64,
+    pub errors: u64,
+    pub current_dir: String,
+}
+
 /// Scan `target.root`. Recorded I/O errors are on the returned snapshot.
 pub fn scan_path(target: &ScanTarget) -> Result<ScanSnapshot, ScanFatal> {
+    scan_path_reporting(target, |_| {})
+}
+
+/// Same walk as [`scan_path`], calling `report` as directories are entered and about every 32 entries.
+pub fn scan_path_reporting<F>(target: &ScanTarget, mut report: F) -> Result<ScanSnapshot, ScanFatal>
+where
+    F: FnMut(&WalkProgress),
+{
     let started = Instant::now();
     let started_at = SystemTime::now();
     let root = resolve_root(&target.root)?;
@@ -153,21 +171,51 @@ pub fn scan_path(target: &ScanTarget) -> Result<ScanSnapshot, ScanFatal> {
         });
 
     let mut state = ScanState::new();
+    let mut current_dir = if redact_entries {
+        String::new()
+    } else {
+        root.display().to_string()
+    };
+    let mut reported_dir = String::new();
+    let mut seen: u64 = 0;
     for entry in walker {
         let item = match entry {
-            Ok(dir_entry) => WalkItem::Entry(dir_entry.path().to_path_buf()),
+            Ok(dir_entry) => {
+                let is_dir = dir_entry.file_type().is_dir();
+                let path = dir_entry.path().to_path_buf();
+                if is_dir && !redact_entries {
+                    current_dir = path.display().to_string();
+                }
+                WalkItem::Entry(path)
+            }
             Err(err) => WalkItem::Failed {
                 path: err.path().map(Path::to_path_buf),
                 message: err.to_string(),
             },
         };
         handle_item(&mut state, item, min_logical_size, redact_entries);
+        seen = seen.saturating_add(1);
+        if seen == 1 || seen % 32 == 0 || current_dir != reported_dir {
+            reported_dir.clone_from(&current_dir);
+            report(&progress_of(&state, &current_dir));
+        }
     }
+    report(&progress_of(&state, &current_dir));
     state.stats.skipped = skipped;
 
     let snapshot = finish(target, root, started_at, started, state);
     log_finished(&snapshot.statistics);
     Ok(snapshot)
+}
+
+fn progress_of(state: &ScanState, current_dir: &str) -> WalkProgress {
+    WalkProgress {
+        directories: state.stats.directories_scanned,
+        files: state.stats.files_scanned,
+        logical_bytes: state.stats.logical_bytes,
+        errors: state.stats.errors,
+        current_dir: current_dir.to_owned(),
+    }
 }
 
 fn log_started(redact: bool, root: &Path) {
@@ -488,6 +536,28 @@ mod tests {
         assert_eq!(snap.statistics.logical_bytes, 7);
         assert_eq!(snap.statistics.errors, 0);
         assert_eq!(snap.status, ScanStatus::Completed);
+    }
+
+    #[test]
+    fn progress_names_the_directory_and_ends_with_the_totals() {
+        let dir = TempDir::new();
+        fs::create_dir(dir.path.join("photos")).unwrap();
+        fs::write(dir.path.join("photos").join("a.txt"), b"hello").unwrap();
+        fs::write(dir.path.join("b.txt"), b"world!").unwrap();
+        let mut seen = Vec::new();
+        let snap = scan_path_reporting(&target(&dir.path), |progress| {
+            seen.push(progress.clone());
+        })
+        .unwrap();
+        assert!(seen.len() >= 2);
+        assert!(seen
+            .iter()
+            .any(|progress| progress.current_dir.ends_with("photos")));
+        let last = seen.last().unwrap();
+        assert_eq!(last.files, snap.statistics.files_scanned);
+        assert_eq!(last.directories, snap.statistics.directories_scanned);
+        assert_eq!(last.logical_bytes, snap.statistics.logical_bytes);
+        assert_eq!(last.files, 2);
     }
 
     #[test]

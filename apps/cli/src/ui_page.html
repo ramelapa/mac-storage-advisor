@@ -212,11 +212,66 @@
     }
     .path-line .path { flex: 1; }
     li .path-line { border-top: 0; padding-top: 0; }
+    .mac-scan {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .mac-scan .note { margin: 0; }
+    .progress-track {
+      position: relative;
+      height: 12px;
+      margin-top: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e7efe9;
+    }
+    .progress-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 35%;
+      border-radius: 999px;
+      background: var(--teal);
+      animation: scan-slide 1.1s ease-in-out infinite;
+    }
+    @keyframes scan-slide {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
+    .chart-title {
+      margin: 16px 0 4px;
+      font-size: 18px;
+      font-family: Palatino, Georgia, serif;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 190px) 1fr auto;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      text-align: left;
+      background: transparent;
+    }
+    .bar-name, .bar-bytes { font-size: 13px; }
+    .bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { height: 12px; border-radius: 999px; background: #f3efe6; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 999px; background: var(--teal); }
+    .bar-fill.cleanup { background: #8a5a32; }
+    @media (prefers-reduced-motion: reduce) {
+      .progress-bar { animation: none; width: 100%; opacity: 0.85; }
+    }
     @media (max-width: 800px) {
       h1 { font-size: 32px; }
       .form, .stats, .prompt, .dup-tools { grid-template-columns: 1fr; }
       .modes { display: grid; grid-template-columns: 1fr 1fr; }
-      .row, .pager, .path-line { align-items: flex-start; flex-direction: column; }
+      .row, .pager, .path-line, .mac-scan { align-items: flex-start; flex-direction: column; }
+      .bar-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -251,6 +306,10 @@
           <button class="primary" id="scan-button" type="submit">Scan</button>
         </div>
         <p class="note">The scan records names, sizes, and timestamps. It does not read file contents, upload anything, or delete anything.</p>
+        <div class="mac-scan">
+          <button type="button" id="scan-mac" class="primary">Scan this Mac</button>
+          <p class="note">Walks your home folder: Desktop, Documents, Downloads, Library, and the rest of your files. macOS system folders such as /System are not included. A large home folder can take a while. The counts on screen update while it walks.</p>
+        </div>
       </form>
 
       <nav class="sections" aria-label="Results">
@@ -265,9 +324,14 @@
       </nav>
 
       <section class="panel" id="overview" data-panel="overview">
-        <h2>This scan</h2>
-        <p class="empty" id="overview-empty">No scan loaded yet. Choose a folder, or pick one from history.</p>
+        <h2>This Mac</h2>
+        <div id="scan-progress" class="hidden" aria-live="polite">
+          <div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div>
+          <p id="scan-progress-label" class="note"></p>
+        </div>
+        <p class="empty" id="overview-empty">No scan loaded yet. Scan this Mac, choose a folder, or pick one from history.</p>
         <div id="overview-body" class="hidden"></div>
+        <div id="home-chart" class="hidden"></div>
       </section>
 
       <section class="panel hidden" data-panel="folders">
@@ -393,7 +457,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
     </section>
   </main>
   <script>
-    const state = { database: "", scanId: null, root: "", folders: null, large: null };
+    const state = { database: "", scanId: null, root: "", home: "", folders: null, large: null, scanning: false };
     const dup = {
       report: null,
       query: "",
@@ -905,6 +969,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       setBanner("Selected scan " + scan.id + ".", true);
       await loadLarge();
       await loadFolders();
+      await loadHomeChart();
     }
 
     async function loadHistory() {
@@ -991,29 +1056,184 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
     $("tab-cli").addEventListener("click", () => showMode("cli"));
     $("path").addEventListener("input", refreshEquivalents);
 
-    $("scan-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = $("scan-button");
-      button.disabled = true;
+    function shortPlace(path) {
+      const parts = String(path || "").split("/").filter(Boolean);
+      if (parts.length <= 2) return path || "this folder";
+      return parts.slice(-2).join("/");
+    }
+
+    function paintProgress(data) {
+      const box = $("scan-progress");
+      const running = data.phase === "walking" || data.phase === "saving";
+      box.classList.toggle("hidden", !running);
+      if (!running) return;
+      const where = data.phase === "saving" ? "Saving the inventory" : shortPlace(data.current_dir || data.root);
+      $("scan-progress-label").textContent = where + " · " + Number(data.files || 0).toLocaleString() + " files · " + bytes(data.logical_bytes || 0);
+    }
+
+    function setScanning(active) {
+      state.scanning = active;
+      $("scan-button").disabled = active;
+      $("scan-mac").disabled = active;
+    }
+
+    async function watchScan() {
+      showSection("overview");
+      $("overview-empty").classList.add("hidden");
+      for (let i = 0; i < 100000; i++) {
+        const data = await api("GET", "/api/scan/progress");
+        paintProgress(data);
+        if (data.phase === "error") throw new Error(data.message || "The scan failed.");
+        if (data.phase === "done" && data.report) {
+          $("scan-progress").classList.add("hidden");
+          renderOverview(data.report);
+          await loadHistory();
+          await loadLarge();
+          await loadFolders();
+          await loadHomeChart();
+          setBanner("Scan " + data.report.scan_id + " finished.", true);
+          return;
+        }
+        if (data.phase !== "walking" && data.phase !== "saving") {
+          throw new Error("The scan did not start.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+      throw new Error("The scan is still running. Check History in a moment.");
+    }
+
+    async function runProgressScan() {
+      if (state.scanning) return;
+      const path = $("path").value.trim();
+      if (!path) {
+        setBanner("Choose a folder first.", false);
+        return;
+      }
+      setScanning(true);
+      showSection("overview");
+      $("scan-progress").classList.remove("hidden");
+      $("scan-progress-label").textContent = "Starting the walk…";
       setBanner("Scanning. This stays on this computer.", true);
       try {
         const exclude = $("exclude").value.split(",").map((part) => part.trim()).filter(Boolean);
-        const report = await api("POST", "/api/scan", {
-          path: $("path").value.trim(),
+        await api("POST", "/api/scan/start", {
+          path,
           exclude,
           min_size: $("min-size").value.trim() || "0"
         });
-        renderOverview(report);
-        showSection("overview");
-        setBanner("Scan " + report.scan_id + " finished.", true);
-        await loadHistory();
-        await loadLarge();
-        await loadFolders();
+        await watchScan();
       } catch (err) {
+        $("scan-progress").classList.add("hidden");
         setBanner(err.message, false);
       } finally {
-        button.disabled = false;
+        setScanning(false);
       }
+    }
+
+    function renderSpaceChart(folderReport, advice) {
+      const host = $("home-chart");
+      host.replaceChildren();
+      const folders = (folderReport.folders || []).slice().sort((a, b) => Number(b.logical_bytes) - Number(a.logical_bytes)).slice(0, 8);
+      if (!folders.length) {
+        host.classList.add("hidden");
+        return;
+      }
+      host.classList.remove("hidden");
+      host.append(el("h3", "chart-title", "Where the space is"));
+      host.append(el("p", "note", "Top folders in this scan, by logical size. Longer bars hold more. This is not free space, and iCloud placeholders are not counted as local."));
+      const maxFolder = Math.max(...folders.map((item) => Number(item.logical_bytes) || 0), 1);
+      for (const item of folders) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "bar-row";
+        row.title = item.path;
+        const name = el("span", "bar-name", baseName(item.path) || item.path);
+        const track = el("span", "bar-track");
+        const fill = el("span", "bar-fill");
+        fill.style.width = Math.max(4, Math.round((Number(item.logical_bytes) / maxFolder) * 100)) + "%";
+        track.append(fill);
+        row.append(name, track, el("span", "bar-bytes", bytes(item.logical_bytes)));
+        row.addEventListener("click", () => {
+          $("folder-search").value = item.path;
+          if (state.folders) renderFolders(state.folders);
+          showSection("folders");
+        });
+        host.append(row);
+      }
+      host.append(el("h3", "chart-title", "Worth a look"));
+      const chances = cleanupChances(advice, folders);
+      if (!chances.length) {
+        host.append(el("p", "note", "No stale files or developer folders stood out. Find duplicates if you want extra copies measured. Nothing is moved from this chart."));
+        return;
+      }
+      host.append(el("p", "note", "These are review hints. They are not bytes the disk will free, and nothing is moved from this chart."));
+      const maxChance = Math.max(...chances.map((item) => item.bytes), 1);
+      for (const item of chances) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "bar-row";
+        const track = el("span", "bar-track");
+        const fill = el("span", "bar-fill cleanup");
+        fill.style.width = Math.max(4, Math.round((item.bytes / maxChance) * 100)) + "%";
+        track.append(fill);
+        row.append(el("span", "bar-name", item.label), track, el("span", "bar-bytes", bytes(item.bytes)));
+        row.addEventListener("click", () => showSection(item.section));
+        host.append(row);
+      }
+    }
+
+    function cleanupChances(advice, folders) {
+      const chances = [];
+      const staleBytes = advice && advice.stale ? Number(advice.stale.logical_bytes) || 0 : 0;
+      if (staleBytes > 0) {
+        chances.push({
+          label: "Unchanged files",
+          bytes: staleBytes,
+          section: "suggestions"
+        });
+      }
+      const trees = advice && advice.developer ? advice.developer.trees || [] : [];
+      const devBytes = trees.reduce((sum, tree) => sum + (Number(tree.logical_bytes) || 0), 0);
+      if (devBytes > 0) {
+        chances.push({ label: "Developer folders", bytes: devBytes, section: "suggestions" });
+      }
+      for (const folder of folders) {
+        const name = baseName(folder.path);
+        if (name === "Library" || name === "Downloads") {
+          chances.push({
+            label: name,
+            bytes: Number(folder.logical_bytes) || 0,
+            section: "folders"
+          });
+        }
+      }
+      return chances.filter((item) => item.bytes > 0);
+    }
+
+    async function loadHomeChart() {
+      if (state.scanId == null) return;
+      if (!state.folders) await loadFolders();
+      let advice = null;
+      try {
+        advice = await api("GET", "/api/analyze?older_than=180&scan=" + state.scanId);
+      } catch (err) {
+        advice = null;
+      }
+      renderSpaceChart(state.folders, advice);
+    }
+
+    $("scan-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await runProgressScan();
+    });
+
+    $("scan-mac").addEventListener("click", async () => {
+      if (!state.home) {
+        setBanner("This computer has no home folder to scan.", false);
+        return;
+      }
+      $("path").value = state.home;
+      await runProgressScan();
     });
 
     $("load-large").addEventListener("click", async () => {
@@ -1180,6 +1400,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       try {
         const status = await api("GET", "/api/status");
         state.database = status.database;
+        state.home = status.home || "";
         $("status-line").textContent = status.product + " " + status.version + " · " + status.listen + " · " + status.database;
         refreshEquivalents();
         paintDuplicates();

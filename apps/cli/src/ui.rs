@@ -8,12 +8,13 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use clap::Args;
 use mac_storage_common::{Error, ScanReport, ScanTarget, PRODUCT_NAME, PRODUCT_VERSION};
-use mac_storage_scanner::scan_path;
+use mac_storage_scanner::{scan_path, scan_path_reporting};
 use mac_storage_storage::{resolve_db_path, Database};
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -38,6 +39,49 @@ pub struct UiArgs {
 struct App {
     database: PathBuf,
     listen: SocketAddr,
+    scan: Arc<Mutex<ScanJob>>,
+}
+
+struct ScanJob {
+    phase: &'static str,
+    root: String,
+    directories: u64,
+    files: u64,
+    logical_bytes: u64,
+    errors: u64,
+    current_dir: String,
+    message: String,
+    report: Option<ScanReport>,
+}
+
+impl ScanJob {
+    fn idle() -> Self {
+        Self {
+            phase: "idle",
+            root: String::new(),
+            directories: 0,
+            files: 0,
+            logical_bytes: 0,
+            errors: 0,
+            current_dir: String::new(),
+            message: String::new(),
+            report: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ProgressBody<'a> {
+    phase: &'a str,
+    root: &'a str,
+    directories: u64,
+    files: u64,
+    logical_bytes: u64,
+    errors: u64,
+    current_dir: &'a str,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<&'a ScanReport>,
 }
 
 #[derive(Serialize)]
@@ -52,6 +96,7 @@ struct StatusBody<'a> {
     database: &'a Path,
     listen: String,
     mode: &'static str,
+    home: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -184,7 +229,11 @@ pub(crate) fn serve(
         );
     }
     let _ = bound.send(listen);
-    let app = App { database, listen };
+    let app = App {
+        database,
+        listen,
+        scan: Arc::new(Mutex::new(ScanJob::idle())),
+    };
     while !stop.load(Ordering::Relaxed) {
         match server.recv_timeout(Duration::from_millis(200)) {
             Ok(Some(request)) => respond(request, &app),
@@ -250,6 +299,7 @@ fn dispatch(app: &App, method: &str, url: &str, host: Option<&str>, body: &[u8])
             };
         }
         ("GET", "/api/status") => status(app),
+        ("GET", "/api/scan/progress") => scan_progress(app),
         ("GET", "/api/history") => history(app, &query),
         ("GET", "/api/large-files") => large_files(app, &query),
         ("GET", "/api/folders") => folders(app, &query),
@@ -257,6 +307,7 @@ fn dispatch(app: &App, method: &str, url: &str, host: Option<&str>, body: &[u8])
         ("GET", "/api/recommendations") => review(app, &query, true),
         ("GET", "/api/trends") => trends(app, &query),
         ("POST", "/api/scan") => scan(app, body),
+        ("POST", "/api/scan/start") => start_scan(app, body),
         ("POST", "/api/duplicates") => duplicates(app, body),
         ("GET", "/api/doctor") => doctor(app),
         ("POST", "/api/trash") => trash(app, body),
@@ -287,7 +338,142 @@ fn status(app: &App) -> Result<Vec<u8>, Error> {
         database: &app.database,
         listen: app.listen.to_string(),
         mode: "ui",
+        home: home_directory(),
     })
+}
+
+fn home_directory() -> Option<PathBuf> {
+    let value = std::env::var_os("HOME")?;
+    if value.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(value))
+    }
+}
+
+fn lock_scan(scan: &Mutex<ScanJob>) -> std::sync::MutexGuard<'_, ScanJob> {
+    scan.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn progress_body(job: &ScanJob) -> ProgressBody<'_> {
+    ProgressBody {
+        phase: job.phase,
+        root: &job.root,
+        directories: job.directories,
+        files: job.files,
+        logical_bytes: job.logical_bytes,
+        errors: job.errors,
+        current_dir: &job.current_dir,
+        message: &job.message,
+        report: job.report.as_ref(),
+    }
+}
+
+fn scan_progress(app: &App) -> Result<Vec<u8>, Error> {
+    let job = lock_scan(&app.scan);
+    to_json(&progress_body(&job))
+}
+
+fn start_scan(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
+    let request: ScanBody = parse_json(body)?;
+    let path = expand_home(request.path.trim());
+    if path.as_os_str().is_empty() {
+        return Err(Error::Usage("path is required".into()));
+    }
+    let min_size = size::parse_byte_size(request.min_size.as_deref().unwrap_or("0"))
+        .map_err(|err| Error::Usage(err.to_string()))?;
+    let exclude = request
+        .exclude
+        .into_iter()
+        .map(|item| item.trim().to_owned())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    {
+        let mut job = lock_scan(&app.scan);
+        if job.phase == "walking" || job.phase == "saving" {
+            return to_json(&progress_body(&job));
+        }
+        *job = ScanJob {
+            phase: "walking",
+            root: path.display().to_string(),
+            directories: 0,
+            files: 0,
+            logical_bytes: 0,
+            errors: 0,
+            current_dir: path.display().to_string(),
+            message: String::new(),
+            report: None,
+        };
+    }
+    let scan = Arc::clone(&app.scan);
+    let database = app.database.clone();
+    thread::spawn(move || {
+        let mut target = ScanTarget::new(path);
+        target.exclusions = exclude;
+        target.min_logical_size = min_size;
+        target.threads = 1;
+        let mut last_report = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        let outcome = scan_path_reporting(&target, |progress| {
+            if last_report.elapsed() < Duration::from_millis(200) {
+                return;
+            }
+            last_report = Instant::now();
+            let mut job = lock_scan(&scan);
+            if job.phase != "walking" {
+                return;
+            }
+            job.directories = progress.directories;
+            job.files = progress.files;
+            job.logical_bytes = progress.logical_bytes;
+            job.errors = progress.errors;
+            job.current_dir.clone_from(&progress.current_dir);
+        });
+        match outcome {
+            Ok(snapshot) => {
+                {
+                    let mut job = lock_scan(&scan);
+                    job.phase = "saving";
+                    job.directories = snapshot.statistics.directories_scanned;
+                    job.files = snapshot.statistics.files_scanned;
+                    job.logical_bytes = snapshot.statistics.logical_bytes;
+                    job.errors = snapshot.statistics.errors;
+                }
+                match save_snapshot(&database, &snapshot) {
+                    Ok(report) => {
+                        let mut job = lock_scan(&scan);
+                        job.phase = "done";
+                        job.message.clear();
+                        job.report = Some(report);
+                    }
+                    Err(err) => {
+                        let mut job = lock_scan(&scan);
+                        job.phase = "error";
+                        job.message = err.to_string();
+                    }
+                }
+            }
+            Err(err) => {
+                let mut job = lock_scan(&scan);
+                job.phase = "error";
+                job.message = err.to_string();
+            }
+        }
+    });
+    let job = lock_scan(&app.scan);
+    to_json(&progress_body(&job))
+}
+
+fn save_snapshot(
+    database: &Path,
+    snapshot: &mac_storage_common::ScanSnapshot,
+) -> Result<ScanReport, Error> {
+    let mut db = Database::open(database).map_err(|err| Error::Storage(err.to_string()))?;
+    let scan = db
+        .save_scan(snapshot)
+        .map_err(|err| Error::Storage(err.to_string()))?;
+    Ok(report::build_report(&scan, snapshot, database))
 }
 
 fn history(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
@@ -520,11 +706,7 @@ fn run_scan(
     target.min_logical_size = min_size;
     target.threads = 1;
     let snapshot = scan_path(&target).map_err(|err| Error::Scan(err.to_string()))?;
-    let mut db = Database::open(database).map_err(|err| Error::Storage(err.to_string()))?;
-    let scan = db
-        .save_scan(&snapshot)
-        .map_err(|err| Error::Storage(err.to_string()))?;
-    Ok(report::build_report(&scan, &snapshot, database))
+    save_snapshot(database, &snapshot)
 }
 
 fn help_text() -> &'static str {
@@ -1023,7 +1205,8 @@ mod tests {
         std::fs::write(root.join("a.txt"), b"same-bytes").unwrap();
         std::fs::write(root.join("b.txt"), b"same-bytes").unwrap();
         std::fs::write(root.join("c.txt"), b"other").unwrap();
-        let db = root.join("advisor.sqlite");
+        let db = root.with_extension("sqlite");
+        let _ = std::fs::remove_file(&db);
         let stop = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
         let stop_thread = Arc::clone(&stop);
@@ -1038,6 +1221,8 @@ mod tests {
         assert!(page.1.contains("By folder"));
         assert!(page.1.contains("Largest extra copies"));
         assert!(page.1.contains("data-section=\"duplicates\""));
+        assert!(page.1.contains("Scan this Mac"));
+        assert!(page.1.contains("scan-progress"));
         assert!(!page.1.contains("<script src="));
 
         let denied = http_host(addr, "GET", "/api/status", "evil.example", "");
@@ -1047,6 +1232,8 @@ mod tests {
         assert_eq!(status.0, 200);
         assert!(status.1.contains(PRODUCT_NAME));
         assert!(status.1.contains(&db.display().to_string()));
+        let status_json: serde_json::Value = serde_json::from_str(&status.1).unwrap();
+        assert!(status_json.get("home").is_some());
 
         let scan_body = format!(
             r#"{{"path":"{}","exclude":[],"min_size":"0"}}"#,
@@ -1055,6 +1242,23 @@ mod tests {
                 .replace('\\', "\\\\")
                 .replace('"', "\\\"")
         );
+        let started = http(addr, "POST", "/api/scan/start", &scan_body);
+        assert_eq!(started.0, 200, "{}", started.1);
+        let mut progress_json = serde_json::Value::Null;
+        for _ in 0..50 {
+            let progress = http(addr, "GET", "/api/scan/progress", "");
+            assert_eq!(progress.0, 200, "{}", progress.1);
+            progress_json = serde_json::from_str(&progress.1).unwrap();
+            let phase = progress_json["phase"].as_str().unwrap_or("");
+            if phase == "done" || phase == "error" {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(progress_json["phase"], "done", "{progress_json}");
+        assert_eq!(progress_json["report"]["files_scanned"], 3);
+        assert!(progress_json["report"].get("contents").is_none());
+
         let scanned = http(addr, "POST", "/api/scan", &scan_body);
         assert_eq!(scanned.0, 200, "{}", scanned.1);
         let scanned_json: serde_json::Value = serde_json::from_str(&scanned.1).unwrap();
