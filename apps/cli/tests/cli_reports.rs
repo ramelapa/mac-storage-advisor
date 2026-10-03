@@ -87,6 +87,7 @@ fn duplicates_large_files_and_history_round_trip() {
     assert_eq!(dup_json["algorithm"], "blake3");
     assert_eq!(dup_json["verified"], true);
     assert_eq!(dup_json["concurrency"], 1);
+    assert_eq!(dup_json["hash_concurrency"], 4);
     let groups = dup_json["duplicate_groups"].as_array().unwrap();
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0]["logical_size"], marker.len());
@@ -142,4 +143,125 @@ fn help_lists_the_new_commands_and_still_names_planned_ones() {
     assert!(text.contains("history"));
     assert!(text.contains("recommendations"));
     assert!(text.contains("mac-storage ui"));
+    assert!(text.contains("categories"));
+    assert!(text.contains("place"));
+}
+
+#[test]
+fn categories_are_a_view_and_place_moves_only_after_confirmation() {
+    let dir = TempDir::new();
+    let docs = dir.path.join("Documents");
+    let artifact = dir.path.join("proj").join("node_modules").join("pkg");
+    fs::create_dir_all(&docs).unwrap();
+    fs::create_dir_all(&artifact).unwrap();
+    fs::write(docs.join("2023.pdf"), b"tax-2023").unwrap();
+    fs::write(docs.join("2024.pdf"), b"tax-2024").unwrap();
+    fs::write(dir.path.join("photo.jpg"), b"img").unwrap();
+    fs::write(artifact.join("index.js"), b"code").unwrap();
+    fs::write(dir.path.join("app.dmg"), b"dmg").unwrap();
+
+    let scanned = run(
+        &dir,
+        &["scan", dir.path.to_str().unwrap(), "--json", "--quiet"],
+    );
+    assert!(
+        scanned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scanned.stderr)
+    );
+
+    let categories = run(&dir, &["categories", "--json"]);
+    assert!(
+        categories.status.success(),
+        "{}",
+        String::from_utf8_lossy(&categories.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&categories.stdout).unwrap();
+    assert!(json.get("files").is_none());
+    let by_name = |name: &str| {
+        json["categories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(by_name("documents")["file_count"], 2);
+    assert_eq!(by_name("documents")["logical_bytes"], 16);
+    assert_eq!(by_name("images")["file_count"], 1);
+    assert_eq!(by_name("installers")["file_count"], 1);
+    assert_eq!(by_name("developer")["file_count"], 1);
+    assert!(!categories
+        .stdout
+        .windows(b"tax-2024".len())
+        .any(|w| w == b"tax-2024"));
+
+    let listed = run(&dir, &["categories", "--category", "documents", "--json"]);
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let listed_json: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(listed_json["files"].as_array().unwrap().len(), 2);
+    let unknown = run(&dir, &["categories", "--category", "secrets"]);
+    assert!(!unknown.status.success());
+
+    let incoming = dir.path.join("Invoice (1).pdf");
+    fs::write(&incoming, b"NEWPDF").unwrap();
+    let preview = run(
+        &dir,
+        &["place", "--path", incoming.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview_json: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview_json["moved"], false);
+    assert_eq!(preview_json["confirmation"], "move file");
+    assert_eq!(preview_json["suggestion"]["suggested_name"], "Invoice.pdf");
+    assert!(preview_json["suggestion"]["suggested_directory"]
+        .as_str()
+        .unwrap()
+        .ends_with("Documents"));
+    assert_eq!(fs::read(&incoming).unwrap(), b"NEWPDF");
+
+    let wrong = run(
+        &dir,
+        &[
+            "place",
+            "--path",
+            incoming.to_str().unwrap(),
+            "--confirm",
+            "move to trash",
+        ],
+    );
+    assert!(!wrong.status.success());
+    assert_eq!(fs::read(&incoming).unwrap(), b"NEWPDF");
+
+    let moved = run(
+        &dir,
+        &[
+            "place",
+            "--path",
+            incoming.to_str().unwrap(),
+            "--confirm",
+            "move file",
+            "--json",
+        ],
+    );
+    assert!(
+        moved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&moved.stderr)
+    );
+    let moved_json: serde_json::Value = serde_json::from_slice(&moved.stdout).unwrap();
+    assert_eq!(moved_json["moved"], true);
+    assert!(!incoming.exists());
+    let destination = docs.join("Invoice.pdf");
+    assert_eq!(fs::read(&destination).unwrap(), b"NEWPDF");
+    assert_eq!(fs::read(docs.join("2023.pdf")).unwrap(), b"tax-2023");
 }

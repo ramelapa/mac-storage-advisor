@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/build-mac-app.sh` builds `Mac Storage Advisor.app` and a disk image on macOS. Opening the app starts the existing local window. The command line is the same binary.
 - The interactive page splits results into sections. Duplicate groups can be filtered, sorted, grouped by folder or file type, and paged. Listing extra copies does not move them.
 - Scan this Mac walks the home folder and shows progress while it runs. The overview chart compares top-level folders and points at cleanup hints. Nothing is moved from the chart.
+- Duplicate hashing uses at most four workers. The size, sample, then full-hash order is unchanged, and a unique sample is still not fully hashed. One worker and four workers produce the same groups. The folder walk stays one thread. The duplicate page shows how many files have been sampled or fully hashed.
+- `mac-storage categories` groups stored files into documents, images, media, archives, installers, developer artifacts, and other. Opening a category lists the files. Nothing is moved or renamed. iCloud placeholder bytes stay out of the category size.
+- `mac-storage place --path FILE` suggests a name and folder from the file name, its extension, and where similar files already live. The file is renamed only when `--confirm` is exactly `move file`. A wrong phrase, an existing destination, a symlink, and a protected path leave the file where it is. Nothing is permanently deleted.
 
 ### Not in this version
 

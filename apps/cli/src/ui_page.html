@@ -237,6 +237,10 @@
       background: var(--teal);
       animation: scan-slide 1.1s ease-in-out infinite;
     }
+    .progress-bar.meter {
+      animation: none;
+      transform: none;
+    }
     @keyframes scan-slide {
       0% { transform: translateX(-120%); }
       100% { transform: translateX(320%); }
@@ -315,9 +319,11 @@
       <nav class="sections" aria-label="Results">
         <button type="button" data-section="overview" aria-pressed="true">Overview</button>
         <button type="button" data-section="folders" aria-pressed="false">Folders</button>
+        <button type="button" data-section="categories" aria-pressed="false">Categories</button>
         <button type="button" data-section="largest" aria-pressed="false">Largest</button>
         <button type="button" data-section="duplicates" aria-pressed="false">Duplicates</button>
         <button type="button" data-section="suggestions" aria-pressed="false">Suggestions</button>
+        <button type="button" data-section="place" aria-pressed="false">Place</button>
         <button type="button" data-section="history" aria-pressed="false">History</button>
         <button type="button" data-section="trash" aria-pressed="false">Trash</button>
         <button type="button" data-section="database" aria-pressed="false">Database</button>
@@ -349,6 +355,16 @@
         <div id="folders-body"><p class="empty">Load folder totals for the selected scan.</p></div>
       </section>
 
+      <section class="panel hidden" data-panel="categories">
+        <div class="row">
+          <h2>Categories</h2>
+          <button type="button" id="load-categories" class="ghost">Load</button>
+        </div>
+        <p class="note">Stored files grouped by kind. Opening a category lists the files. Nothing is moved or renamed. iCloud placeholder bytes are left out of the size.</p>
+        <div id="category-list" class="organize" role="group" aria-label="File categories"></div>
+        <div id="category-body"><p class="empty">Load categories for the selected scan.</p></div>
+      </section>
+
       <section class="panel hidden" data-panel="largest">
         <div class="row">
           <h2>Largest files</h2>
@@ -369,6 +385,10 @@
           <button type="button" id="find-duplicates" class="primary">Find duplicates</button>
         </div>
         <p class="note">Hashes stay in the local database. Extra bytes are additional copies, not space the disk will free. Hard links are not counted twice. Listing a path for Trash does not move it.</p>
+        <div id="dup-progress" class="hidden" aria-live="polite">
+          <div class="progress-track" aria-hidden="true"><div id="dup-progress-bar" class="progress-bar"></div></div>
+          <p id="dup-progress-label" class="note"></p>
+        </div>
         <div class="dup-tools">
           <div>
             <label for="dup-search">Filter paths</label>
@@ -409,6 +429,20 @@
           <button type="button" id="load-advice" class="ghost">Review</button>
         </div>
         <div id="advice-body"><p class="empty">Suggestions only. Nothing is moved or deleted.</p></div>
+      </section>
+
+      <section class="panel hidden" data-panel="place">
+        <h2>Place a file</h2>
+        <p class="note">Suggests a name and folder from the file name and where similar files already live in the selected scan. Nothing moves until the confirmation box says <span class="path">move file</span>. The file is renamed into that folder. It is not deleted, and an existing file is not overwritten.</p>
+        <label for="place-path">File</label>
+        <input id="place-path" placeholder="/Users/you/Downloads/Invoice (1).pdf" autocomplete="off">
+        <div class="row" style="margin-top: 12px">
+          <button type="button" id="place-suggest" class="ghost">Suggest</button>
+          <button type="button" id="place-apply" class="primary">Move to suggestion</button>
+        </div>
+        <label for="place-phrase">Confirmation</label>
+        <input id="place-phrase" placeholder="move file" autocomplete="off">
+        <div id="place-body"><p class="empty">No suggestion yet.</p></div>
       </section>
 
       <section class="panel hidden" id="doctor-panel" data-panel="database">
@@ -529,6 +563,8 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         "mac-storage duplicates" + db,
         "mac-storage large-files --limit 20" + db,
         "mac-storage folders --depth 1" + db,
+        "mac-storage categories" + db,
+        "mac-storage place --path FILE" + db,
         "mac-storage history" + db,
         "mac-storage analyze" + db,
         "mac-storage recommendations" + db,
@@ -1246,21 +1282,132 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
       catch (err) { setBanner(err.message, false); }
     });
 
+    function showDuplicateProgress(progress) {
+      const box = $("dup-progress");
+      const bar = $("dup-progress-bar");
+      const label = $("dup-progress-label");
+      box.classList.remove("hidden");
+      const total = Number(progress.files_total) || 0;
+      const done = Number(progress.files_done) || 0;
+      const phase = progress.phase === "hashing" ? "Reading full files" : progress.phase === "sampling" ? "Sampling files" : progress.phase === "done" ? "Finished" : "Comparing files";
+      if (total > 0) {
+        bar.style.width = Math.max(4, Math.round((done / total) * 100)) + "%";
+        bar.classList.add("meter");
+      } else {
+        bar.style.width = "35%";
+        bar.classList.remove("meter");
+      }
+      label.textContent = phase + " · " + done.toLocaleString() + " of " + total.toLocaleString() + " files";
+    }
+
+    async function loadCategories(name) {
+      const params = [];
+      if (state.scanId != null) params.push("scan=" + encodeURIComponent(state.scanId));
+      if (name) params.push("category=" + encodeURIComponent(name));
+      const report = await api("GET", "/api/categories" + (params.length ? "?" + params.join("&") : ""));
+      state.scanId = report.scan_id;
+      renderCategories(report, name || "");
+    }
+
+    function renderCategories(report, selected) {
+      const list = $("category-list");
+      list.replaceChildren();
+      (report.categories || []).forEach((category) => {
+        const button = el("button", "", category.name);
+        button.type = "button";
+        button.setAttribute("aria-pressed", category.name === selected ? "true" : "false");
+        button.addEventListener("click", () => {
+          loadCategories(category.name).catch((err) => setBanner(err.message, false));
+        });
+        list.append(button);
+      });
+      const host = $("category-body");
+      host.replaceChildren();
+      if (!selected) {
+        host.append(el("p", "empty", "Choose a category to see the files. Nothing is moved."));
+        return;
+      }
+      const summary = (report.categories || []).find((item) => item.name === selected);
+      if (summary) {
+        host.append(el("p", "note", summary.file_count + " files · " + bytes(summary.logical_bytes) + " local · " + summary.dataless_files + " not stored on this Mac."));
+      }
+      const files = report.files || [];
+      if (!files.length) {
+        host.append(el("p", "empty", "No stored files in " + selected + "."));
+        return;
+      }
+      files.forEach((file) => {
+        const line = file.path + " · " + bytes(file.logical_size);
+        host.append(el("p", "path", file.is_dataless ? line + " · not stored on this Mac" : line));
+      });
+    }
+
+    async function suggestPlace(apply) {
+      const path = $("place-path").value.trim();
+      if (!path) throw new Error("Name a file to place");
+      const body = { path: path, scan: state.scanId };
+      if (apply) body.confirmation = $("place-phrase").value;
+      const report = await api("POST", "/api/place", body);
+      if (report.scan_id != null) state.scanId = report.scan_id;
+      renderPlace(report);
+      setBanner(report.moved ? "Moved to " + report.suggestion.suggested_path + "." : "Suggestion only. Nothing was moved.", true);
+    }
+
+    function renderPlace(report) {
+      const suggestion = report.suggestion || {};
+      const host = $("place-body");
+      host.replaceChildren();
+      host.append(el("p", "note", suggestion.reason || ""));
+      host.append(el("p", "path", "Category: " + (suggestion.category || "")));
+      host.append(el("p", "path", "Name: " + (suggestion.suggested_name || "")));
+      host.append(el("p", "path", "Folder: " + (suggestion.suggested_directory || "")));
+      host.append(el("p", "path", "Path: " + (suggestion.suggested_path || "")));
+      host.append(el("p", "note", report.moved ? "Moved." : "Not moved. Type move file to accept this suggestion."));
+    }
+
     $("find-duplicates").addEventListener("click", async () => {
       const button = $("find-duplicates");
       button.disabled = true;
-      setBanner("Hashing stored files locally.", true);
+      showSection("duplicates");
+      $("dup-progress").classList.remove("hidden");
+      setBanner("Comparing stored files locally.", true);
       try {
-        const report = await api("POST", "/api/duplicates", { scan: state.scanId, verify: false });
+        await api("POST", "/api/duplicates/start", { scan: state.scanId, verify: false });
+        let report = null;
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          const progress = await api("GET", "/api/duplicates/progress");
+          showDuplicateProgress(progress);
+          if (progress.phase === "done") {
+            report = progress.report;
+            break;
+          }
+          if (progress.phase === "error") throw new Error(progress.message || "Duplicate pass failed");
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        if (!report) throw new Error("Duplicate pass is still running");
         state.scanId = report.scan_id;
         renderDuplicates(report);
-        showSection("duplicates");
         setBanner("Duplicate pass finished for scan " + report.scan_id + ".", true);
       } catch (err) {
         setBanner(err.message, false);
       } finally {
         button.disabled = false;
       }
+    });
+
+    $("load-categories").addEventListener("click", async () => {
+      try { await loadCategories(); showSection("categories"); setBanner("", true); }
+      catch (err) { setBanner(err.message, false); }
+    });
+
+    $("place-suggest").addEventListener("click", async () => {
+      try { await suggestPlace(false); showSection("place"); }
+      catch (err) { setBanner(err.message, false); }
+    });
+
+    $("place-apply").addEventListener("click", async () => {
+      try { await suggestPlace(true); showSection("place"); }
+      catch (err) { setBanner(err.message, false); }
     });
 
     $("load-advice").addEventListener("click", async () => {

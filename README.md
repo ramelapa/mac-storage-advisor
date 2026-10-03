@@ -96,6 +96,10 @@ mac-storage duplicates
 mac-storage duplicates --verify --json
 mac-storage large-files --limit 20
 mac-storage folders --depth 1
+mac-storage categories
+mac-storage categories --category documents
+mac-storage place --path ~/Downloads/Invoice\ \(1\).pdf
+mac-storage place --path ~/Downloads/Invoice\ \(1\).pdf --confirm "move file"
 mac-storage history
 mac-storage analyze
 mac-storage recommendations
@@ -114,7 +118,7 @@ mac-storage ui --port 47231 --db /path/to/mac-storage.sqlite
 | `--verbose` | Debug logs on stderr. Paths and sizes only, never contents. |
 | `--quiet` | No human summary and no info logs. |
 | `--exclude` | Repeatable. Name, prefix, or glob. See below. |
-| `--threads` | Accepted and stored on `scan`. Scanning and hashing use one thread. |
+| `--threads` | Accepted and stored on `scan`. The folder walk uses one thread. Duplicate hashing uses at most four workers. |
 | `--min-size` | Bytes, or `K`/`KB`/`KiB`/`M`/`MiB`/`G`/`GiB`/`T`/`TiB`. Every regular file is still counted. Files below the threshold are not persisted. |
 | `--redact-paths` | Redact paths in logs. JSON and SQLite still store them. |
 | `--db` | SQLite file. Overrides `MAC_STORAGE_DB`. |
@@ -129,7 +133,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -161,9 +165,11 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 - `--exclude 'Downloads/*.dmg'` matches that suffix, not files in a nested folder.
 - `--exclude '/tmp/**/*.txt'` is an absolute glob.
 
-`duplicates`, `large-files`, `history`, `analyze`, and `recommendations` read the newest scan unless `--scan ID` is set. They exit 1 when the database has no scans. Hash errors are listed and do not abort the rest of the group. `doctor` exits 1 when the database cannot be opened or an integrity check fails.
+`duplicates`, `large-files`, `categories`, `place`, `history`, `analyze`, and `recommendations` read the newest scan unless `--scan ID` is set. They exit 1 when the database has no scans, except `place`, which can still suggest the file's current folder. Hash errors are listed and do not abort the rest of the group. `doctor` exits 1 when the database cannot be opened or an integrity check fails.
 
-`duplicates --json` includes `duplicate_groups`, `hard_link_sets`, and `hash_errors`. File bytes are not in that object. `redundant_bytes` counts extra content copies after hard links are collapsed. Zero-byte files are not reported as duplicates.
+`duplicates --json` includes `duplicate_groups`, `hard_link_sets`, `hash_errors`, and `hash_concurrency`. `concurrency` stays 1 because the folder walk is still one thread. File bytes are not in that object. `redundant_bytes` counts extra content copies after hard links are collapsed. Zero-byte files are not reported as duplicates. A sample hash that is unique in its size group is not followed by a full hash.
+
+`categories` is a view of stored files. `categories --category documents` adds the file list for that category. `place` prints a suggested name and folder and leaves the file where it is. `place --confirm "move file"` renames it to that suggestion. Any other confirmation leaves it in place. The move does not overwrite a file that is already there, and it does not delete anything.
 
 `analyze` skips build directories and `~$` Office lock files when it counts stale files. Duplicate groups that sit entirely inside those directories are reported as package metadata, not as extra documents. iCloud placeholders are left out of the stale and Downloads tallies, and Trash will not move them. `trends` only subtracts two scans of the same root.
 
@@ -179,11 +185,11 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.9 is the current release. It can scan your home folder with progress on screen, show which top-level folders hold the space, find identical files, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page, in a native window, or in Mac Storage Advisor.app. A long duplicate list can be filtered and paged instead of scrolled as one block. Feature status is authoritative in [docs/features.md](docs/features.md). `--threads` stays single-threaded.
+v0.10 is the current release. It can scan your home folder with progress on screen, show which top-level folders hold the space, find identical files while showing hash progress, group stored files into categories, suggest a name and folder for a file you just saved, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page, in a native window, or in Mac Storage Advisor.app. A long duplicate list can be filtered and paged instead of scrolled as one block. Feature status is authoritative in [docs/features.md](docs/features.md). The folder walk stays one thread. Duplicate hashing uses at most four workers.
 
 ## Limitations
 
-- Single-threaded. `--threads` does not parallelize.
+- The folder walk is one thread. `--threads` does not parallelize scanning. Duplicate hashing is capped at four workers.
 - The whole scan is held in memory, then inserted in one transaction.
 - A directory row still stores that directory's own inode size. Folder totals are computed from stored regular files when `folders` runs. Files omitted by `--min-size` are not in that rollup.
 - Logical bytes count each hard-link path separately.

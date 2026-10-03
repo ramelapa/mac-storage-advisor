@@ -5,6 +5,7 @@
 mod advise;
 mod doctor;
 mod folders;
+mod organize;
 mod query;
 mod report;
 mod size;
@@ -62,7 +63,7 @@ Examples:
 It uses the operating-system Trash. It does not permanently delete, and it will not
 move an iCloud placeholder. `window` opens this same page in a native window.
 
---threads is accepted and stored. Scanning and hashing run on one thread.
+--threads is accepted and stored. The folder walk runs on one thread. Duplicate hashing uses at most four workers.
 Exclusions: a name (node_modules), a path prefix (sub/dir or /abs/path), or a glob
 (*.dmg, Downloads/*.dmg, **/*.log). See docs/architecture.md.
 Protected macOS prefixes (/System, /private, /bin, /sbin, /usr, /Library) are skipped
@@ -85,6 +86,10 @@ enum Command {
     LargeFiles(query::LargeArgs),
     /// Group stored regular files into folder totals. Does not read file contents.
     Folders(folders::FolderArgs),
+    /// Group stored files by kind. This is a view; nothing is moved or renamed.
+    Categories(organize::CategoryArgs),
+    /// Suggest a file name and folder. Moves the file only after `--confirm "move file"`.
+    Place(organize::PlaceArgs),
     /// List scans already stored in the local database.
     History(query::HistoryArgs),
     /// Review stale files, Downloads, and developer-artifact directories.
@@ -181,6 +186,8 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Duplicates(args) => query::duplicates_command(args),
         Command::LargeFiles(args) => query::large_files_command(args),
         Command::Folders(args) => folders::folders_command(args),
+        Command::Categories(args) => organize::categories_command(args),
+        Command::Place(args) => organize::place_command(args),
         Command::History(args) => query::history_command(args),
         Command::Analyze(args) => advise::analyze_command(args),
         Command::Recommendations(args) => advise::recommendations_command(args),

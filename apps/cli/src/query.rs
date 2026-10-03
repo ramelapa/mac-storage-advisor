@@ -4,7 +4,10 @@ use std::path::PathBuf;
 
 use clap::Args;
 use mac_storage_common::{PRODUCT_NAME, PRODUCT_VERSION, SCAN_CONCURRENCY};
-use mac_storage_duplicates::{find_duplicates, Candidate, DuplicateAnalysis, HASH_ALGORITHM};
+use mac_storage_duplicates::{
+    find_duplicates_reporting, Candidate, DuplicateAnalysis, DuplicateProgress, HASH_ALGORITHM,
+    HASH_CONCURRENCY,
+};
 use mac_storage_storage::{
     resolve_db_path, Database, NewContentHash, NewDuplicateGroup, NewDuplicateMember, ScanSummary,
     StoredFile,
@@ -110,6 +113,18 @@ pub(crate) fn run_duplicates(
     scan: Option<i64>,
     verify: bool,
 ) -> Result<DuplicatesReport, Error> {
+    run_duplicates_reporting(db, scan, verify, |_| {})
+}
+
+pub(crate) fn run_duplicates_reporting<F>(
+    db: Option<&std::path::Path>,
+    scan: Option<i64>,
+    verify: bool,
+    on_progress: F,
+) -> Result<DuplicatesReport, Error>
+where
+    F: FnMut(DuplicateProgress),
+{
     let (mut database, db_path) = open_database(db)?;
     let scan_id = database
         .resolve_scan_id(scan)
@@ -124,9 +139,11 @@ pub(crate) fn run_duplicates(
         scan_id,
         files = stored.len(),
         verify,
+        hash_concurrency = HASH_CONCURRENCY,
         "duplicate pass started"
     );
-    let analysis = find_duplicates(&candidates(&stored), verify);
+    let analysis =
+        find_duplicates_reporting(&candidates(&stored), verify, HASH_CONCURRENCY, on_progress);
     database
         .replace_duplicate_result(scan_id, &hash_rows(&analysis), &group_rows(&analysis))
         .map_err(|err| Error::Storage(err.to_string()))?;
@@ -148,6 +165,7 @@ pub(crate) fn run_duplicates(
         hash_errors: analysis.errors.clone(),
         verified: verify,
         concurrency: SCAN_CONCURRENCY,
+        hash_concurrency: u32::try_from(HASH_CONCURRENCY).unwrap_or(u32::MAX),
         algorithm: HASH_ALGORITHM,
     })
 }
@@ -296,7 +314,7 @@ fn history_row(scan: &ScanSummary) -> HistoryScan {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DuplicatesReport {
     product: &'static str,
     version: &'static str,
@@ -306,6 +324,7 @@ pub(crate) struct DuplicatesReport {
     algorithm: &'static str,
     verified: bool,
     concurrency: u32,
+    hash_concurrency: u32,
     duplicate_groups: Vec<mac_storage_duplicates::DuplicateGroup>,
     hard_link_sets: Vec<mac_storage_duplicates::HardLinkSet>,
     hash_errors: Vec<mac_storage_duplicates::HashError>,
@@ -364,6 +383,10 @@ pub(crate) fn format_duplicates(report: &DuplicatesReport) -> String {
         "extra content copies; not bytes the disk will free",
         report.hash_errors.len()
     );
+    out.push_str(&format!(
+        "Hash workers: {} (capped). The folder walk stays one thread.\n",
+        report.hash_concurrency
+    ));
     if report.verified {
         out.push_str("Byte verification: on\n");
     }

@@ -49,7 +49,7 @@ The display name is `PRODUCT_NAME` in `crates/common`. Binary and package names 
 6. The snapshot is inserted in one SQLite transaction.
 7. The CLI prints the human summary or the `ScanReport` JSON.
 
-`--threads` is stored on the scan row. `SCAN_CONCURRENCY` is 1. The flag does not start a thread pool. Hashing uses that same single thread. That decision is deferred rather than a pool in v0.2.
+`--threads` is stored on the scan row. `SCAN_CONCURRENCY` is 1. The flag does not start a thread pool for the folder walk. Duplicate hashing uses at most `HASH_CONCURRENCY` (4) workers and still skips a full hash when the sample is unique.
 
 ## Exclusion rules
 

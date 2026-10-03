@@ -10,8 +10,11 @@ use std::path::{Path, PathBuf};
 
 use mac_storage_scanner::{is_protected_path, normalize_lexical};
 
-/// The only confirmation this crate accepts. A boolean flag is not enough.
+/// The only confirmation this crate accepts for Trash. A boolean flag is not enough.
 pub const CONFIRMATION_PHRASE: &str = "move to trash";
+
+/// The only confirmation this crate accepts for moving a file to a suggested folder.
+pub const MOVE_CONFIRMATION_PHRASE: &str = "move file";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inventoried {
@@ -197,6 +200,119 @@ pub struct Inspection {
 /// Move one path with the operating-system Trash. Symlinks are not followed.
 pub fn trash_os(path: &Path) -> Result<(), String> {
     trash::delete(path).map_err(|err| err.to_string())
+}
+
+/// A file that was renamed into the suggested folder. The old path is gone; nothing was deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaceOutcome {
+    pub source: PathBuf,
+    pub destination: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaceError {
+    /// The confirmation text did not match. The file was not moved.
+    NotConfirmed,
+    /// The move was refused. The source file is still in place.
+    Refused { reason: String },
+}
+
+impl std::fmt::Display for PlaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotConfirmed => write!(
+                f,
+                "nothing was moved; confirmation must be exactly \"{MOVE_CONFIRMATION_PHRASE}\""
+            ),
+            Self::Refused { reason } => write!(f, "{reason}"),
+        }
+    }
+}
+
+impl std::error::Error for PlaceError {}
+
+/// Rename `source` to `destination` only when `confirmation` is [`MOVE_CONFIRMATION_PHRASE`].
+///
+/// This does not overwrite an existing path, follow a symlink, move a directory,
+/// or touch a protected macOS path or an iCloud placeholder. A failed rename
+/// leaves the source where it was. There is no permanent delete.
+pub fn move_file(
+    source: &Path,
+    destination: &Path,
+    confirmation: &str,
+) -> Result<PlaceOutcome, PlaceError> {
+    if confirmation != MOVE_CONFIRMATION_PHRASE {
+        return Err(PlaceError::NotConfirmed);
+    }
+    let source = normalize_lexical(source);
+    let destination = normalize_lexical(destination);
+    if source == destination {
+        return Err(PlaceError::Refused {
+            reason: "the file is already in the suggested place; nothing was moved".into(),
+        });
+    }
+    if is_protected_path(&source) || is_protected_path(&destination) {
+        return Err(PlaceError::Refused {
+            reason: "refusing to move a protected macOS path; nothing was moved".into(),
+        });
+    }
+    match std::fs::symlink_metadata(&source) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(PlaceError::Refused {
+                reason: "refusing to move a symlink; nothing was moved".into(),
+            });
+        }
+        Ok(meta) if !meta.is_file() => {
+            return Err(PlaceError::Refused {
+                reason: "only a regular file can be moved; nothing was moved".into(),
+            });
+        }
+        Ok(meta) if dataless_metadata(&meta) => {
+            return Err(PlaceError::Refused {
+                reason: "refusing to move an iCloud placeholder; nothing was moved".into(),
+            });
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(PlaceError::Refused {
+                reason: "file is not on disk; nothing was moved".into(),
+            });
+        }
+        Err(err) => {
+            return Err(PlaceError::Refused {
+                reason: format!("could not read the file, so nothing was moved: {err}"),
+            });
+        }
+    }
+    if std::fs::symlink_metadata(&destination).is_ok() {
+        return Err(PlaceError::Refused {
+            reason: "a file is already at the suggested path; nothing was moved".into(),
+        });
+    }
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    match std::fs::symlink_metadata(parent) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(PlaceError::Refused {
+                reason: "the suggested folder is not a directory; nothing was moved".into(),
+            });
+        }
+        Err(_) => {
+            return Err(PlaceError::Refused {
+                reason: "the suggested folder does not exist; nothing was moved".into(),
+            });
+        }
+    }
+    std::fs::rename(&source, &destination).map_err(|err| PlaceError::Refused {
+        reason: format!("the file was not moved: {err}"),
+    })?;
+    Ok(PlaceOutcome {
+        source,
+        destination,
+    })
 }
 
 /// `lstat` the path. On macOS, `SF_DATALESS` is reported. Other platforms are not dataless.
@@ -420,6 +536,70 @@ mod tests {
         assert!(!link.exists(), "symlink path should have moved to Trash");
         assert_eq!(fs::read(&target).unwrap(), b"kept");
         assert_eq!(fs::read(&extra).unwrap(), b"stay");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn place_dir() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "mac-storage-place-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Documents")).unwrap();
+        root
+    }
+
+    #[test]
+    fn a_file_moves_only_when_the_phrase_matches() {
+        let root = place_dir();
+        let source = root.join("Invoice (1).pdf");
+        let destination = root.join("Documents").join("Invoice.pdf");
+        fs::write(&source, b"tax").unwrap();
+
+        let refused = move_file(&source, &destination, "yes").unwrap_err();
+        assert!(matches!(refused, PlaceError::NotConfirmed));
+        assert_eq!(fs::read(&source).unwrap(), b"tax");
+        assert!(!destination.exists());
+
+        let moved = move_file(&source, &destination, MOVE_CONFIRMATION_PHRASE).unwrap();
+        assert_eq!(moved.destination, normalize_lexical(&destination));
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"tax");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_existing_destination_a_symlink_and_a_protected_path_stay_put() {
+        let root = place_dir();
+        let source = root.join("notes.txt");
+        let destination = root.join("Documents").join("notes.txt");
+        fs::write(&source, b"local").unwrap();
+        fs::write(&destination, b"already").unwrap();
+        let blocked = move_file(&source, &destination, MOVE_CONFIRMATION_PHRASE).unwrap_err();
+        assert!(matches!(blocked, PlaceError::Refused { .. }));
+        assert_eq!(fs::read(&source).unwrap(), b"local");
+        assert_eq!(fs::read(&destination).unwrap(), b"already");
+
+        let link = root.join("link.txt");
+        std::os::unix::fs::symlink(&source, &link).unwrap();
+        let link_dest = root.join("Documents").join("link.txt");
+        let refused_link = move_file(&link, &link_dest, MOVE_CONFIRMATION_PHRASE).unwrap_err();
+        assert!(matches!(refused_link, PlaceError::Refused { .. }));
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(!link_dest.exists());
+
+        let protected = move_file(
+            Path::new("/usr/bin/true"),
+            &root.join("true"),
+            MOVE_CONFIRMATION_PHRASE,
+        )
+        .unwrap_err();
+        assert!(matches!(protected, PlaceError::Refused { .. }));
+        assert!(root.join("true").symlink_metadata().is_err());
         let _ = fs::remove_dir_all(&root);
     }
 }

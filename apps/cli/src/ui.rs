@@ -40,6 +40,7 @@ struct App {
     database: PathBuf,
     listen: SocketAddr,
     scan: Arc<Mutex<ScanJob>>,
+    duplicates: Arc<Mutex<DuplicateJob>>,
 }
 
 struct ScanJob {
@@ -70,6 +71,26 @@ impl ScanJob {
     }
 }
 
+struct DuplicateJob {
+    phase: &'static str,
+    files_total: u64,
+    files_done: u64,
+    message: String,
+    report: Option<query::DuplicatesReport>,
+}
+
+impl DuplicateJob {
+    fn idle() -> Self {
+        Self {
+            phase: "idle",
+            files_total: 0,
+            files_done: 0,
+            message: String::new(),
+            report: None,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ProgressBody<'a> {
     phase: &'a str,
@@ -82,6 +103,16 @@ struct ProgressBody<'a> {
     message: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     report: Option<&'a ScanReport>,
+}
+
+#[derive(Serialize)]
+struct DuplicateProgressBody<'a> {
+    phase: &'a str,
+    files_total: u64,
+    files_done: u64,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<&'a query::DuplicatesReport>,
 }
 
 #[derive(Serialize)]
@@ -114,6 +145,15 @@ struct DuplicatesBody {
     scan: Option<i64>,
     #[serde(default)]
     verify: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlaceBody {
+    path: String,
+    #[serde(default)]
+    scan: Option<i64>,
+    #[serde(default)]
+    confirmation: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +212,15 @@ enum PageCommand {
         paths: Vec<PathBuf>,
         confirm: Option<String>,
     },
+    Categories {
+        scan: Option<i64>,
+        category: Option<String>,
+    },
+    Place {
+        scan: Option<i64>,
+        path: PathBuf,
+        confirm: Option<String>,
+    },
     Doctor,
 }
 
@@ -221,7 +270,7 @@ pub(crate) fn serve(
         println!(
             "{PRODUCT_NAME} {PRODUCT_VERSION}\n\
              Interactive UI: http://{listen}\n\
-             Command line: mac-storage scan, duplicates, large-files, history, analyze, recommendations, trends\n\
+             Command line: mac-storage scan, duplicates, categories, place, large-files, history, analyze, recommendations, trends\n\
              Database: {}\n\
              Listening on this computer only. Press Ctrl-C to stop.\n\
              Nothing is uploaded or deleted.",
@@ -233,6 +282,7 @@ pub(crate) fn serve(
         database,
         listen,
         scan: Arc::new(Mutex::new(ScanJob::idle())),
+        duplicates: Arc::new(Mutex::new(DuplicateJob::idle())),
     };
     while !stop.load(Ordering::Relaxed) {
         match server.recv_timeout(Duration::from_millis(200)) {
@@ -309,6 +359,10 @@ fn dispatch(app: &App, method: &str, url: &str, host: Option<&str>, body: &[u8])
         ("POST", "/api/scan") => scan(app, body),
         ("POST", "/api/scan/start") => start_scan(app, body),
         ("POST", "/api/duplicates") => duplicates(app, body),
+        ("POST", "/api/duplicates/start") => start_duplicates(app, body),
+        ("GET", "/api/duplicates/progress") => duplicate_progress(app),
+        ("GET", "/api/categories") => categories(app, &query),
+        ("POST", "/api/place") => place(app, body),
         ("GET", "/api/doctor") => doctor(app),
         ("POST", "/api/trash") => trash(app, body),
         ("POST", "/api/command") => command(app, body),
@@ -355,6 +409,18 @@ fn lock_scan(scan: &Mutex<ScanJob>) -> std::sync::MutexGuard<'_, ScanJob> {
     scan.lock().unwrap_or_else(|err| err.into_inner())
 }
 
+fn lock_duplicates(job: &Mutex<DuplicateJob>) -> std::sync::MutexGuard<'_, DuplicateJob> {
+    job.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn scan_busy(job: &ScanJob) -> bool {
+    matches!(job.phase, "walking" | "saving")
+}
+
+fn duplicates_busy(job: &DuplicateJob) -> bool {
+    matches!(job.phase, "sampling" | "hashing" | "saving")
+}
+
 fn progress_body(job: &ScanJob) -> ProgressBody<'_> {
     ProgressBody {
         phase: job.phase,
@@ -389,8 +455,13 @@ fn start_scan(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
         .filter(|item| !item.is_empty())
         .collect::<Vec<_>>();
     {
+        if duplicates_busy(&lock_duplicates(&app.duplicates)) {
+            return Err(Error::Usage(
+                "a duplicate pass is still running; wait for it to finish".into(),
+            ));
+        }
         let mut job = lock_scan(&app.scan);
-        if job.phase == "walking" || job.phase == "saving" {
+        if scan_busy(&job) {
             return to_json(&progress_body(&job));
         }
         *job = ScanJob {
@@ -550,18 +621,127 @@ fn scan(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 fn duplicates(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
-    let request: DuplicatesBody = if body.is_empty() {
-        DuplicatesBody {
-            scan: None,
-            verify: false,
-        }
-    } else {
-        parse_json(body)?
-    };
+    let request = duplicates_body(body)?;
     to_json(&query::run_duplicates(
         Some(&app.database),
         request.scan,
         request.verify,
+    )?)
+}
+
+fn duplicates_body(body: &[u8]) -> Result<DuplicatesBody, Error> {
+    if body.is_empty() {
+        Ok(DuplicatesBody {
+            scan: None,
+            verify: false,
+        })
+    } else {
+        parse_json(body)
+    }
+}
+
+fn duplicate_progress_body(job: &DuplicateJob) -> DuplicateProgressBody<'_> {
+    DuplicateProgressBody {
+        phase: job.phase,
+        files_total: job.files_total,
+        files_done: job.files_done,
+        message: &job.message,
+        report: job.report.as_ref(),
+    }
+}
+
+fn duplicate_progress(app: &App) -> Result<Vec<u8>, Error> {
+    let job = lock_duplicates(&app.duplicates);
+    to_json(&duplicate_progress_body(&job))
+}
+
+fn start_duplicates(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
+    let request = duplicates_body(body)?;
+    if scan_busy(&lock_scan(&app.scan)) {
+        return Err(Error::Usage(
+            "a scan is still running; wait for it to finish".into(),
+        ));
+    }
+    {
+        let mut job = lock_duplicates(&app.duplicates);
+        if duplicates_busy(&job) {
+            return to_json(&duplicate_progress_body(&job));
+        }
+        *job = DuplicateJob {
+            phase: "sampling",
+            files_total: 0,
+            files_done: 0,
+            message: String::new(),
+            report: None,
+        };
+    }
+    let duplicates = Arc::clone(&app.duplicates);
+    let database = app.database.clone();
+    let scan = request.scan;
+    let verify = request.verify;
+    thread::spawn(move || {
+        let mut last_report = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        let outcome = query::run_duplicates_reporting(Some(&database), scan, verify, |progress| {
+            let due = last_report.elapsed() >= Duration::from_millis(200)
+                || progress.files_done == progress.files_total
+                || progress.phase == "done";
+            if !due {
+                return;
+            }
+            last_report = Instant::now();
+            let mut job = lock_duplicates(&duplicates);
+            if !duplicates_busy(&job) && job.phase != "sampling" {
+                return;
+            }
+            if progress.phase == "done" {
+                return;
+            }
+            job.phase = progress.phase;
+            job.files_total = progress.files_total;
+            job.files_done = progress.files_done;
+        });
+        match outcome {
+            Ok(report) => {
+                let mut job = lock_duplicates(&duplicates);
+                job.phase = "done";
+                job.files_done = job.files_total;
+                job.message.clear();
+                job.report = Some(report);
+            }
+            Err(err) => {
+                let mut job = lock_duplicates(&duplicates);
+                job.phase = "error";
+                job.message = err.to_string();
+            }
+        }
+    });
+    let job = lock_duplicates(&app.duplicates);
+    to_json(&duplicate_progress_body(&job))
+}
+
+fn categories(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
+    let category = query
+        .get("category")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    to_json(&crate::organize::run_categories(
+        Some(app.database.as_path()),
+        query_i64(query, "scan")?,
+        category.as_deref(),
+    )?)
+}
+
+fn place(app: &App, body: &[u8]) -> Result<Vec<u8>, Error> {
+    let request: PlaceBody = parse_json(body)?;
+    let path = expand_home(request.path.trim());
+    let confirmation = request.confirmation.as_deref().map(str::trim);
+    to_json(&crate::organize::run_place(
+        Some(app.database.as_path()),
+        request.scan,
+        &path,
+        confirmation,
     )?)
 }
 
@@ -674,6 +854,22 @@ fn execute(app: &App, parsed: ParsedCommand) -> Result<CommandResult, Error> {
             };
             Ok(CommandResult { text, scan_id })
         }
+        PageCommand::Categories { scan, category } => {
+            let report = crate::organize::run_categories(db, scan, category.as_deref())?;
+            finish(
+                parsed.json,
+                &report,
+                crate::organize::format_categories(&report),
+            )
+        }
+        PageCommand::Place {
+            scan,
+            path,
+            confirm,
+        } => {
+            let report = crate::organize::run_place(db, scan, &path, confirm.as_deref())?;
+            finish(parsed.json, &report, crate::organize::format_place(&report))
+        }
         PageCommand::Doctor => {
             let report = crate::doctor::run_doctor(db)?;
             let scan_id = report.newest_scan.as_ref().map(|scan| scan.id);
@@ -717,6 +913,8 @@ Mac Storage Advisor page commands (not a system shell):
   duplicates [--scan ID] [--verify] [--json]
   large-files [--scan ID] [--limit N] [--min-size SIZE] [--json]
   folders [--scan ID] [--depth N] [--json]
+  categories [--scan ID] [--category NAME] [--json]
+  place --path PATH [--scan ID] [--confirm PHRASE] [--json]
   history [--limit N] [--json]
   analyze [--scan ID] [--older-than DAYS] [--json]
   recommendations [--scan ID] [--older-than DAYS] [--json]
@@ -726,6 +924,7 @@ Mac Storage Advisor page commands (not a system shell):
 
 A leading ~/ is your home directory. Pipes, semicolons, and other programs are refused.
 trash moves a path only when --confirm is exactly: move to trash. Otherwise nothing is moved.
+place moves a file only when --confirm is exactly: move file. Otherwise it only prints a suggestion.
 Nothing is uploaded or permanently deleted.
 "
 }
@@ -751,6 +950,7 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
     let mut depth = 1u32;
     let mut trash_paths = Vec::new();
     let mut confirm: Option<String> = None;
+    let mut category: Option<String> = None;
     let mut positionals = Vec::new();
     let mut index = 1;
     while index < words.len() {
@@ -809,6 +1009,7 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
             }
             "--path" => trash_paths.push(PathBuf::from(take_value(&mut index)?)),
             "--confirm" => confirm = Some(take_value(&mut index)?),
+            "--category" => category = Some(take_value(&mut index)?),
             "--db"
             | "--threads"
             | "--verbose"
@@ -828,9 +1029,14 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
             }
         }
     }
-    if verb != "trash" && (!trash_paths.is_empty() || confirm.is_some()) {
+    if verb != "trash" && verb != "place" && (!trash_paths.is_empty() || confirm.is_some()) {
         return Err(Error::Usage(
-            "--path and --confirm belong to the trash command".into(),
+            "--path and --confirm belong to trash or place".into(),
+        ));
+    }
+    if verb != "categories" && category.is_some() {
+        return Err(Error::Usage(
+            "--category belongs to the categories command".into(),
         ));
     }
     let command = match verb {
@@ -895,6 +1101,21 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
             PageCommand::Trash {
                 scan,
                 paths: trash_paths,
+                confirm,
+            }
+        }
+        "categories" => {
+            reject_positionals(verb, &positionals)?;
+            PageCommand::Categories { scan, category }
+        }
+        "place" => {
+            reject_positionals(verb, &positionals)?;
+            if trash_paths.len() != 1 {
+                return Err(Error::Usage("place needs one --path".into()));
+            }
+            PageCommand::Place {
+                scan,
+                path: expand_home(trash_paths[0].to_string_lossy().trim()),
                 confirm,
             }
         }
@@ -1223,6 +1444,10 @@ mod tests {
         assert!(page.1.contains("data-section=\"duplicates\""));
         assert!(page.1.contains("Scan this Mac"));
         assert!(page.1.contains("scan-progress"));
+        assert!(page.1.contains("data-section=\"categories\""));
+        assert!(page.1.contains("data-section=\"place\""));
+        assert!(page.1.contains("dup-progress"));
+        assert!(page.1.contains("move file"));
         assert!(!page.1.contains("<script src="));
 
         let denied = http_host(addr, "GET", "/api/status", "evil.example", "");
@@ -1282,6 +1507,89 @@ mod tests {
             1
         );
         assert!(duplicates_json.get("file_contents").is_none());
+        assert_eq!(duplicates_json["concurrency"], 1);
+        assert_eq!(duplicates_json["hash_concurrency"], 4);
+
+        let started = http(
+            addr,
+            "POST",
+            "/api/duplicates/start",
+            &format!(r#"{{"scan":{scan_id},"verify":false}}"#),
+        );
+        assert_eq!(started.0, 200, "{}", started.1);
+        let mut duplicate_progress = serde_json::Value::Null;
+        for _ in 0..50 {
+            let progress = http(addr, "GET", "/api/duplicates/progress", "");
+            assert_eq!(progress.0, 200, "{}", progress.1);
+            duplicate_progress = serde_json::from_str(&progress.1).unwrap();
+            let phase = duplicate_progress["phase"].as_str().unwrap_or("");
+            if phase == "done" || phase == "error" {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(duplicate_progress["phase"], "done", "{duplicate_progress}");
+        assert_eq!(
+            duplicate_progress["report"]["duplicate_groups"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let categories = http(
+            addr,
+            "GET",
+            &format!("/api/categories?scan={scan_id}&category=documents"),
+            "",
+        );
+        assert_eq!(categories.0, 200, "{}", categories.1);
+        assert!(categories.1.contains("documents"));
+        assert!(categories.1.contains("a.txt") || categories.1.contains("b.txt"));
+
+        let incoming = root.join("note (1).txt");
+        std::fs::write(&incoming, b"placed").unwrap();
+        let place_body = format!(
+            r#"{{"path":"{}","scan":{scan_id}}}"#,
+            incoming
+                .display()
+                .to_string()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        );
+        let suggested = http(addr, "POST", "/api/place", &place_body);
+        assert_eq!(suggested.0, 200, "{}", suggested.1);
+        let suggested_json: serde_json::Value = serde_json::from_str(&suggested.1).unwrap();
+        assert_eq!(suggested_json["moved"], false);
+        assert_eq!(suggested_json["suggestion"]["suggested_name"], "note.txt");
+        assert_eq!(std::fs::read(&incoming).unwrap(), b"placed");
+
+        let refused_body = format!(
+            r#"{{"path":"{}","scan":{scan_id},"confirmation":"move to trash"}}"#,
+            incoming
+                .display()
+                .to_string()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        );
+        let refused_place = http(addr, "POST", "/api/place", &refused_body);
+        assert_eq!(refused_place.0, 400, "{}", refused_place.1);
+        assert_eq!(std::fs::read(&incoming).unwrap(), b"placed");
+
+        let move_body = format!(
+            r#"{{"path":"{}","scan":{scan_id},"confirmation":"move file"}}"#,
+            incoming
+                .display()
+                .to_string()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        );
+        let moved = http(addr, "POST", "/api/place", &move_body);
+        assert_eq!(moved.0, 200, "{}", moved.1);
+        let moved_json: serde_json::Value = serde_json::from_str(&moved.1).unwrap();
+        assert_eq!(moved_json["moved"], true);
+        assert!(!incoming.exists());
+        assert_eq!(std::fs::read(root.join("note.txt")).unwrap(), b"placed");
 
         let large = http(
             addr,

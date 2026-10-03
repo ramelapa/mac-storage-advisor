@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use mac_storage_common::{RecommendationCategory, RiskLevel};
+use mac_storage_scanner::is_protected_path;
 use serde::Serialize;
 
 /// Files last modified at least this long ago are stale. Artifact trees are
@@ -725,6 +726,242 @@ fn signed_delta(newest: u64, previous: u64) -> i64 {
     newest.saturating_sub(previous)
 }
 
+/// Stable category order for a stored scan. This is a view. Nothing is moved.
+pub const CATEGORY_ORDER: [&str; 7] = [
+    "documents",
+    "images",
+    "media",
+    "archives",
+    "installers",
+    "developer",
+    "other",
+];
+
+/// One category of stored regular files. `logical_bytes` omits iCloud placeholders.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileCategorySummary {
+    pub name: &'static str,
+    pub file_count: u64,
+    pub logical_bytes: u64,
+    pub dataless_files: u64,
+}
+
+/// A stored file shown inside a category. The path is not changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CategorizedFile {
+    pub path: PathBuf,
+    pub logical_size: u64,
+    pub extension: Option<String>,
+    pub is_dataless: bool,
+}
+
+/// Where a newly saved file could go, based on its name and files already scanned.
+/// Accepting it is a separate confirmed move. This function does not touch the disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PlaceSuggestion {
+    pub source: PathBuf,
+    pub suggested_name: String,
+    pub suggested_directory: PathBuf,
+    pub suggested_path: PathBuf,
+    pub category: &'static str,
+    pub reason: String,
+}
+
+/// Summarize every category, including ones with no files, in [`CATEGORY_ORDER`].
+pub fn categorize_files(files: &[InventoryFile]) -> Vec<FileCategorySummary> {
+    CATEGORY_ORDER
+        .into_iter()
+        .map(|name| {
+            let matched: Vec<&InventoryFile> = files
+                .iter()
+                .filter(|file| file_category(&file.path, file.extension.as_deref()) == name)
+                .collect();
+            let dataless_files = matched.iter().filter(|file| file.is_dataless).count();
+            FileCategorySummary {
+                name,
+                file_count: u64::try_from(matched.len()).unwrap_or(u64::MAX),
+                logical_bytes: matched
+                    .iter()
+                    .filter(|file| !file.is_dataless)
+                    .fold(0u64, |sum, file| sum.saturating_add(file.logical_size)),
+                dataless_files: u64::try_from(dataless_files).unwrap_or(u64::MAX),
+            }
+        })
+        .collect()
+}
+
+/// Files in one category, sorted by path. `None` means the category name is unknown.
+pub fn files_in_category(files: &[InventoryFile], category: &str) -> Option<Vec<CategorizedFile>> {
+    if !CATEGORY_ORDER.contains(&category) {
+        return None;
+    }
+    let mut listed: Vec<CategorizedFile> = files
+        .iter()
+        .filter(|file| file_category(&file.path, file.extension.as_deref()) == category)
+        .map(|file| CategorizedFile {
+            path: file.path.clone(),
+            logical_size: file.logical_size,
+            extension: file.extension.clone(),
+            is_dataless: file.is_dataless,
+        })
+        .collect();
+    listed.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.logical_size.cmp(&right.logical_size))
+    });
+    Some(listed)
+}
+
+/// Classify a stored path. A file inside a developer-artifact directory stays
+/// in `developer` even when its extension would otherwise be a document or image.
+pub fn file_category(path: &Path, extension: Option<&str>) -> &'static str {
+    if artifact_root(path).is_some() {
+        return "developer";
+    }
+    match extension.unwrap_or("").to_ascii_lowercase().as_str() {
+        "pdf" | "doc" | "docx" | "ppt" | "pptx" | "xls" | "xlsx" | "txt" | "md" | "rtf" | "csv"
+        | "pages" | "key" | "numbers" | "odt" | "ods" | "odp" => "documents",
+        "jpg" | "jpeg" | "png" | "gif" | "heic" | "heif" | "webp" | "tif" | "tiff" | "bmp"
+        | "svg" | "raw" | "cr2" | "nef" => "images",
+        "mp4" | "mov" | "m4v" | "avi" | "mkv" | "wmv" | "mp3" | "m4a" | "wav" | "aac" | "flac"
+        | "aiff" => "media",
+        "zip" | "tar" | "gz" | "tgz" | "bz2" | "7z" | "rar" | "xz" => "archives",
+        "dmg" | "pkg" | "iso" | "exe" | "msi" => "installers",
+        _ => "other",
+    }
+}
+
+/// Suggest a file name and folder for `source` from the stored scan.
+///
+/// The folder is the one that already holds the most files of the same
+/// extension, skipping iCloud placeholders, developer-artifact trees, and
+/// protected macOS paths. The name drops a trailing `copy` or ` (1)` style
+/// suffix. Nothing is renamed or moved.
+pub fn suggest_place(source: &Path, inventory: &[InventoryFile]) -> PlaceSuggestion {
+    let source = source.to_path_buf();
+    let original_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("untitled")
+        .to_owned();
+    let suggested_name = suggested_file_name(&original_name);
+    let extension = Path::new(&original_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    let category = file_category(&source, extension.as_deref());
+    let current_dir = source
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
+    let mut counts: BTreeMap<PathBuf, u64> = BTreeMap::new();
+    for file in inventory {
+        if file.is_dataless || file.path == source {
+            continue;
+        }
+        if artifact_root(&file.path).is_some() {
+            continue;
+        }
+        let file_ext = file
+            .extension
+            .as_deref()
+            .map(|ext| ext.to_ascii_lowercase());
+        if file_ext != extension {
+            continue;
+        }
+        let Some(parent) = file.path.parent() else {
+            continue;
+        };
+        if parent.as_os_str().is_empty() || is_protected_path(parent) {
+            continue;
+        }
+        let entry = counts.entry(parent.to_path_buf()).or_default();
+        *entry = entry.saturating_add(1);
+    }
+
+    let suggested_directory = counts
+        .iter()
+        .max_by(|left, right| left.1.cmp(right.1).then_with(|| right.0.cmp(left.0)))
+        .map(|(path, _)| path.clone())
+        .unwrap_or_else(|| current_dir.clone());
+    let peer_count = counts.get(&suggested_directory).copied().unwrap_or(0);
+    let suggested_path = suggested_directory.join(&suggested_name);
+    let ext_label = extension.unwrap_or_else(|| "file".into());
+    let mut reason = if peer_count == 0 {
+        format!(
+            "No other {ext_label} files in this scan, so the suggestion keeps the current folder."
+        )
+    } else {
+        format!(
+            "{peer_count} other {ext_label} file{} already live in {}.",
+            if peer_count == 1 { "" } else { "s" },
+            suggested_directory.display()
+        )
+    };
+    if suggested_name != original_name {
+        reason.push_str(" The suggested name drops a copy or download suffix.");
+    }
+    if suggested_path == source {
+        reason.push_str(" The file is already in that place.");
+    }
+    PlaceSuggestion {
+        source,
+        suggested_name,
+        suggested_directory,
+        suggested_path,
+        category,
+        reason,
+    }
+}
+
+/// Drop a trailing ` copy` or ` (digits)` from a file name. The extension stays.
+pub fn suggested_file_name(file_name: &str) -> String {
+    let (stem, extension) = match file_name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
+            (stem, Some(extension))
+        }
+        _ => (file_name, None),
+    };
+    let mut cleaned = stem.trim().to_owned();
+    loop {
+        let next = strip_name_suffix(&cleaned);
+        if next == cleaned {
+            break;
+        }
+        cleaned = next;
+    }
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() {
+        return file_name.to_owned();
+    }
+    match extension {
+        Some(extension) => format!("{cleaned}.{extension}"),
+        None => cleaned,
+    }
+}
+
+fn strip_name_suffix(stem: &str) -> String {
+    let lower = stem.to_ascii_lowercase();
+    for suffix in [" - copy", " copy"] {
+        if lower.ends_with(suffix) && stem.len() >= suffix.len() {
+            let keep = stem.len() - suffix.len();
+            return stem[..keep].trim_end().to_owned();
+        }
+    }
+    if let Some(open) = stem.rfind(" (") {
+        let inside = &stem[open + 2..];
+        if let Some(digits) = inside.strip_suffix(')') {
+            if !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()) {
+                return stem[..open].trim_end().to_owned();
+            }
+        }
+    }
+    stem.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1048,5 +1285,131 @@ mod tests {
         let sub_only = deep.iter().find(|row| row.path.ends_with("sub")).unwrap();
         assert_eq!(sub_only.logical_bytes, 30);
         assert_eq!(sub_only.local_files, 1);
+    }
+
+    #[test]
+    fn categories_group_extensions_and_leave_placeholders_out_of_the_bytes() {
+        let mut cloud = file("/tmp/scan/Photos/trip.heic", 9_000, None, Some("heic"));
+        cloud.is_dataless = true;
+        let files = vec![
+            file("/tmp/scan/Docs/notes.pdf", 100, None, Some("pdf")),
+            file("/tmp/scan/Docs/sheet.xlsx", 40, None, Some("xlsx")),
+            file("/tmp/scan/Photos/cat.jpg", 20, None, Some("jpg")),
+            cloud,
+            file("/tmp/scan/Movies/clip.mp4", 80, None, Some("mp4")),
+            file("/tmp/scan/Downloads/app.dmg", 50, None, Some("dmg")),
+            file("/tmp/scan/Downloads/src.zip", 10, None, Some("zip")),
+            file(
+                "/tmp/scan/proj/node_modules/pkg/index.js",
+                5,
+                None,
+                Some("js"),
+            ),
+            file("/tmp/scan/proj/main.rs", 7, None, Some("rs")),
+        ];
+        let summary = categorize_files(&files);
+        assert_eq!(
+            summary.iter().map(|item| item.name).collect::<Vec<_>>(),
+            CATEGORY_ORDER.to_vec()
+        );
+        let documents = summary
+            .iter()
+            .find(|item| item.name == "documents")
+            .unwrap();
+        assert_eq!(documents.file_count, 2);
+        assert_eq!(documents.logical_bytes, 140);
+        let images = summary.iter().find(|item| item.name == "images").unwrap();
+        assert_eq!(images.file_count, 2);
+        assert_eq!(images.logical_bytes, 20);
+        assert_eq!(images.dataless_files, 1);
+        let media = summary.iter().find(|item| item.name == "media").unwrap();
+        assert_eq!(media.file_count, 1);
+        assert_eq!(media.logical_bytes, 80);
+        assert_eq!(
+            summary
+                .iter()
+                .find(|item| item.name == "developer")
+                .unwrap()
+                .file_count,
+            1
+        );
+        assert_eq!(
+            summary
+                .iter()
+                .find(|item| item.name == "other")
+                .unwrap()
+                .file_count,
+            1
+        );
+        let docs = files_in_category(&files, "documents").unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs[0].path.ends_with("notes.pdf"));
+        assert!(files_in_category(&files, "secrets").is_none());
+        let developer = files_in_category(&files, "developer").unwrap();
+        assert!(developer[0].path.ends_with("index.js"));
+    }
+
+    #[test]
+    fn place_suggestion_uses_the_common_folder_and_drops_a_copy_suffix() {
+        let files = vec![
+            file("/tmp/scan/Documents/taxes/2024.pdf", 10, None, Some("pdf")),
+            file("/tmp/scan/Documents/taxes/2023.pdf", 10, None, Some("pdf")),
+            file("/tmp/scan/Downloads/random.pdf", 10, None, Some("pdf")),
+            file(
+                "/tmp/scan/proj/node_modules/left.pdf",
+                10,
+                None,
+                Some("pdf"),
+            ),
+            file("/tmp/scan/Pictures/cat.jpg", 4, None, Some("jpg")),
+        ];
+        let suggestion = suggest_place(Path::new("/tmp/scan/Downloads/Invoice (1).pdf"), &files);
+        assert_eq!(suggestion.category, "documents");
+        assert_eq!(suggestion.suggested_name, "Invoice.pdf");
+        assert_eq!(
+            suggestion.suggested_directory,
+            PathBuf::from("/tmp/scan/Documents/taxes")
+        );
+        assert_eq!(
+            suggestion.suggested_path,
+            PathBuf::from("/tmp/scan/Documents/taxes/Invoice.pdf")
+        );
+        assert!(!suggestion.reason.contains("node_modules"));
+
+        let tied = vec![
+            file("/tmp/scan/b/one.pdf", 1, None, Some("pdf")),
+            file("/tmp/scan/a/two.pdf", 1, None, Some("pdf")),
+        ];
+        let tie = suggest_place(Path::new("/tmp/scan/Downloads/note.pdf"), &tied);
+        assert_eq!(tie.suggested_directory, PathBuf::from("/tmp/scan/a"));
+
+        let alone = suggest_place(Path::new("/tmp/scan/Downloads/song.mp3"), &files);
+        assert_eq!(alone.category, "media");
+        assert_eq!(
+            alone.suggested_directory,
+            PathBuf::from("/tmp/scan/Downloads")
+        );
+        assert_eq!(alone.suggested_name, "song.mp3");
+        assert_eq!(suggested_file_name("Report - Copy.pdf"), "Report.pdf");
+        assert_eq!(
+            suggested_file_name("final (draft).txt"),
+            "final (draft).txt"
+        );
+
+        let protected = vec![file("/usr/share/doc/manual.pdf", 1, None, Some("pdf"))];
+        let stay = suggest_place(Path::new("/tmp/scan/Downloads/manual (2).pdf"), &protected);
+        assert_eq!(
+            stay.suggested_directory,
+            PathBuf::from("/tmp/scan/Downloads")
+        );
+        assert_eq!(stay.suggested_name, "manual.pdf");
+
+        let mut cloud = file("/tmp/scan/iCloud/only.pdf", 1, None, Some("pdf"));
+        cloud.is_dataless = true;
+        let ignored = suggest_place(Path::new("/tmp/scan/Desktop/new.pdf"), &[cloud]);
+        assert_eq!(
+            ignored.suggested_directory,
+            PathBuf::from("/tmp/scan/Desktop")
+        );
     }
 }

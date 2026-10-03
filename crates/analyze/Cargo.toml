@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 mac-storage-common = { workspace = true }
+mac-storage-scanner = { workspace = true }
 serde = { workspace = true }
 
 [lints]

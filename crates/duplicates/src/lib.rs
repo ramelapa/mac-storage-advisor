@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
 
 use serde::Serialize;
 
@@ -19,6 +22,10 @@ pub const SAMPLE_BYTES: u64 = 64 * 1024;
 
 /// Hash algorithm stored with every content hash row.
 pub const HASH_ALGORITHM: &str = "blake3";
+
+/// Most hash workers a duplicate pass will start. A larger request is capped.
+/// The directory walk stays one thread; only content hashing uses this cap.
+pub const HASH_CONCURRENCY: usize = 4;
 
 /// A persisted regular file the duplicate pass is allowed to read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,10 +111,32 @@ struct Sample {
 }
 
 struct HashedLeader {
-    cluster_index: usize,
     sample: Sample,
-    full_hash: Option<String>,
-    hashed_bytes: u64,
+}
+
+/// How far a duplicate pass has gotten. Counts are files whose contents are
+/// being read, not every file in the scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DuplicateProgress {
+    pub phase: &'static str,
+    pub files_total: u64,
+    pub files_done: u64,
+}
+
+struct SizeBucket {
+    logical_size: u64,
+    clusters: Vec<Cluster>,
+}
+
+struct HashJob {
+    bucket: usize,
+    cluster_index: usize,
+    path: PathBuf,
+}
+
+/// Clamp a requested worker count to [`HASH_CONCURRENCY`]. Zero becomes one.
+pub fn hash_workers(requested: usize) -> usize {
+    requested.clamp(1, HASH_CONCURRENCY)
 }
 
 /// Group `files` from a single scan.
@@ -115,8 +144,28 @@ struct HashedLeader {
 /// Zero-byte files are ignored. Hard links collapse to one hash read. A
 /// sample hash that is unique in its size group does not get a full hash.
 /// `verify` re-reads survivors and drops a group member whose bytes disagree
-/// with the hash.
+/// with the hash. Hash reads use at most [`HASH_CONCURRENCY`] workers. The
+/// groups, hashes, and errors are sorted, so the worker count does not change
+/// the result.
 pub fn find_duplicates(files: &[Candidate], verify: bool) -> DuplicateAnalysis {
+    find_duplicates_reporting(files, verify, HASH_CONCURRENCY, |_| {})
+}
+
+/// Same grouping as [`find_duplicates`], with progress after each hashed file.
+///
+/// `workers` is capped by [`hash_workers`]. `on_progress` runs on the calling
+/// thread. `sampling` is the 64 KiB window. `hashing` is the full read, and
+/// only for files whose sample was not unique.
+pub fn find_duplicates_reporting<F>(
+    files: &[Candidate],
+    verify: bool,
+    workers: usize,
+    mut on_progress: F,
+) -> DuplicateAnalysis
+where
+    F: FnMut(DuplicateProgress),
+{
+    let workers = hash_workers(workers);
     let hard_link_sets = hard_link_sets(files);
     let mut by_size: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for (index, file) in files.iter().enumerate() {
@@ -126,105 +175,186 @@ pub fn find_duplicates(files: &[Candidate], verify: bool) -> DuplicateAnalysis {
         by_size.entry(file.logical_size).or_default().push(index);
     }
 
-    let mut groups = Vec::new();
-    let mut hashes = Vec::new();
-    let mut errors = Vec::new();
-
+    let mut buckets = Vec::new();
     for (logical_size, indexes) in by_size {
         let clusters = clusters_of(files, &indexes);
         if clusters.len() < 2 {
             continue;
         }
-        let mut leaders = Vec::new();
-        for (cluster_index, cluster) in clusters.iter().enumerate() {
-            let leader = &files[cluster.leader];
-            match sample_hash(&leader.path) {
-                Ok(sample) => leaders.push(HashedLeader {
-                    cluster_index,
-                    hashed_bytes: sample.bytes,
-                    full_hash: None,
-                    sample,
-                }),
-                Err(err) => errors.push(HashError {
-                    path: leader.path.clone(),
-                    message: format!("could not read file for hashing: {err}"),
-                }),
+        buckets.push(SizeBucket {
+            logical_size,
+            clusters,
+        });
+    }
+
+    let mut sample_jobs = Vec::new();
+    for (bucket_index, bucket) in buckets.iter().enumerate() {
+        for cluster_index in 0..bucket.clusters.len() {
+            let leader = bucket.clusters[cluster_index].leader;
+            sample_jobs.push(HashJob {
+                bucket: bucket_index,
+                cluster_index,
+                path: files[leader].path.clone(),
+            });
+        }
+    }
+
+    on_progress(DuplicateProgress {
+        phase: "sampling",
+        files_total: count_of(&sample_jobs),
+        files_done: 0,
+    });
+    let sample_results = map_parallel(
+        &sample_jobs,
+        workers,
+        |job| sample_hash(&job.path),
+        |done, total| {
+            on_progress(DuplicateProgress {
+                phase: "sampling",
+                files_total: total,
+                files_done: done,
+            });
+        },
+    );
+
+    let mut leaders: Vec<Vec<Option<HashedLeader>>> = buckets
+        .iter()
+        .map(|bucket| (0..bucket.clusters.len()).map(|_| None).collect())
+        .collect();
+    let mut hashes = Vec::new();
+    let mut errors = Vec::new();
+    for (job, result) in sample_jobs.iter().zip(sample_results) {
+        match result {
+            Ok(sample) => {
+                leaders[job.bucket][job.cluster_index] = Some(HashedLeader { sample });
             }
+            Err(err) => errors.push(HashError {
+                path: job.path.clone(),
+                message: format!("could not read file for hashing: {err}"),
+            }),
         }
+    }
 
-        let mut by_sample: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        for (index, leader) in leaders.iter().enumerate() {
-            by_sample
-                .entry(leader.sample.hash.clone())
-                .or_default()
-                .push(index);
-        }
-
-        let mut survivors = Vec::new();
-        for indexes in by_sample.values() {
+    let mut full_jobs = Vec::new();
+    for (bucket_index, bucket) in buckets.iter().enumerate() {
+        let grouped = sample_groups(&leaders[bucket_index]);
+        for indexes in grouped.into_values() {
             if indexes.len() == 1 {
-                let leader = &leaders[indexes[0]];
+                let cluster_index = indexes[0];
+                let leader = leaders[bucket_index][cluster_index]
+                    .as_ref()
+                    .expect("sample");
                 hashes.push(ContentHash {
-                    file_id: files[clusters[leader.cluster_index].leader].id,
+                    file_id: files[bucket.clusters[cluster_index].leader].id,
                     algorithm: HASH_ALGORITHM,
                     sample_hash: leader.sample.hash.clone(),
                     full_hash: None,
                     hashed_bytes: leader.sample.bytes,
                 });
-            } else {
-                survivors.extend(indexes.iter().copied());
+                continue;
             }
-        }
-
-        let mut by_full: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        for index in survivors {
-            let path = &files[clusters[leaders[index].cluster_index].leader].path;
-            let full = if leaders[index].sample.entire_file {
-                Ok((
-                    leaders[index].sample.hash.clone(),
-                    leaders[index].sample.bytes,
-                ))
-            } else {
-                full_hash(path)
-            };
-            match full {
-                Ok((hash, nbytes)) => {
-                    leaders[index].full_hash = Some(hash.clone());
-                    leaders[index].hashed_bytes = nbytes;
-                    hashes.push(ContentHash {
-                        file_id: files[clusters[leaders[index].cluster_index].leader].id,
-                        algorithm: HASH_ALGORITHM,
-                        sample_hash: leaders[index].sample.hash.clone(),
-                        full_hash: Some(hash.clone()),
-                        hashed_bytes: nbytes,
-                    });
-                    by_full.entry(hash).or_default().push(index);
+            for cluster_index in indexes {
+                let leader = leaders[bucket_index][cluster_index]
+                    .as_ref()
+                    .expect("sample");
+                if leader.sample.entire_file {
+                    continue;
                 }
-                Err(err) => errors.push(HashError {
-                    path: path.clone(),
-                    message: format!("could not read file for hashing: {err}"),
-                }),
+                full_jobs.push(HashJob {
+                    bucket: bucket_index,
+                    cluster_index,
+                    path: files[bucket.clusters[cluster_index].leader].path.clone(),
+                });
+            }
+        }
+    }
+
+    on_progress(DuplicateProgress {
+        phase: "hashing",
+        files_total: count_of(&full_jobs),
+        files_done: 0,
+    });
+    let full_results = map_parallel(
+        &full_jobs,
+        workers,
+        |job| full_hash(&job.path),
+        |done, total| {
+            on_progress(DuplicateProgress {
+                phase: "hashing",
+                files_total: total,
+                files_done: done,
+            });
+        },
+    );
+    let mut full_by_key: BTreeMap<(usize, usize), io::Result<(String, u64)>> = BTreeMap::new();
+    for (job, result) in full_jobs.iter().zip(full_results) {
+        full_by_key.insert((job.bucket, job.cluster_index), result);
+    }
+
+    let mut groups = Vec::new();
+    for (bucket_index, bucket) in buckets.iter().enumerate() {
+        let mut by_full: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let grouped = sample_groups(&leaders[bucket_index]);
+        for indexes in grouped.into_values() {
+            if indexes.len() < 2 {
+                continue;
+            }
+            for cluster_index in indexes {
+                let leader = leaders[bucket_index][cluster_index]
+                    .as_ref()
+                    .expect("sample");
+                let path = &files[bucket.clusters[cluster_index].leader].path;
+                let full = if leader.sample.entire_file {
+                    Ok((leader.sample.hash.clone(), leader.sample.bytes))
+                } else {
+                    match full_by_key.get(&(bucket_index, cluster_index)) {
+                        Some(Ok((hash, nbytes))) => Ok((hash.clone(), *nbytes)),
+                        Some(Err(err)) => Err(err.to_string()),
+                        None => Err("full hash was not computed".into()),
+                    }
+                };
+                match full {
+                    Ok((hash, nbytes)) => {
+                        hashes.push(ContentHash {
+                            file_id: files[bucket.clusters[cluster_index].leader].id,
+                            algorithm: HASH_ALGORITHM,
+                            sample_hash: leader.sample.hash.clone(),
+                            full_hash: Some(hash.clone()),
+                            hashed_bytes: nbytes,
+                        });
+                        by_full.entry(hash).or_default().push(cluster_index);
+                    }
+                    Err(err) => errors.push(HashError {
+                        path: path.clone(),
+                        message: format!("could not read file for hashing: {err}"),
+                    }),
+                }
             }
         }
 
-        for (hash, mut leader_indexes) in by_full {
+        for (hash, mut cluster_indexes) in by_full {
             if verify {
-                leader_indexes =
-                    confirm_bytes(files, &clusters, &leaders, &leader_indexes, &mut errors);
+                cluster_indexes =
+                    confirm_bytes(files, &bucket.clusters, &cluster_indexes, &mut errors);
             }
-            if leader_indexes.len() < 2 {
+            if cluster_indexes.len() < 2 {
                 continue;
             }
             groups.push(group_from(
                 files,
-                &clusters,
-                &leaders,
-                &leader_indexes,
-                logical_size,
+                &bucket.clusters,
+                &cluster_indexes,
+                bucket.logical_size,
                 hash,
             ));
         }
     }
+
+    on_progress(DuplicateProgress {
+        phase: "done",
+        files_total: count_of(&sample_jobs),
+        files_done: count_of(&sample_jobs),
+    });
 
     groups.sort_by(|left, right| {
         right
@@ -243,20 +373,87 @@ pub fn find_duplicates(files: &[Candidate], verify: bool) -> DuplicateAnalysis {
     }
 }
 
+fn count_of<T>(items: &[T]) -> u64 {
+    u64::try_from(items.len()).unwrap_or(u64::MAX)
+}
+
+fn sample_groups(leaders: &[Option<HashedLeader>]) -> BTreeMap<String, Vec<usize>> {
+    let mut by_sample: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (cluster_index, leader) in leaders.iter().enumerate() {
+        if let Some(leader) = leader {
+            by_sample
+                .entry(leader.sample.hash.clone())
+                .or_default()
+                .push(cluster_index);
+        }
+    }
+    by_sample
+}
+
+fn map_parallel<T, R, Work, Report>(
+    items: &[T],
+    workers: usize,
+    work: Work,
+    mut report: Report,
+) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    Work: Fn(&T) -> R + Sync,
+    Report: FnMut(u64, u64),
+{
+    let total = count_of(items);
+    if items.is_empty() {
+        report(0, 0);
+        return Vec::new();
+    }
+    let workers = workers.clamp(1, items.len()).min(HASH_CONCURRENCY);
+    let mut slots: Vec<Option<R>> = std::iter::repeat_with(|| None).take(items.len()).collect();
+    let next = AtomicUsize::new(0);
+    let work = &work;
+    thread::scope(|scope| {
+        let (tx, rx) = mpsc::channel();
+        for _ in 0..workers {
+            let tx = tx.clone();
+            let next = &next;
+            scope.spawn(move || loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                if index >= items.len() {
+                    break;
+                }
+                let value = work(&items[index]);
+                if tx.send((index, value)).is_err() {
+                    break;
+                }
+            });
+        }
+        drop(tx);
+        let mut done = 0u64;
+        while let Ok((index, value)) = rx.recv() {
+            slots[index] = Some(value);
+            done = done.saturating_add(1);
+            report(done, total);
+        }
+    });
+    slots
+        .into_iter()
+        .map(|item| item.expect("every hash job finished"))
+        .collect()
+}
+
 fn confirm_bytes(
     files: &[Candidate],
     clusters: &[Cluster],
-    leaders: &[HashedLeader],
-    leader_indexes: &[usize],
+    cluster_indexes: &[usize],
     errors: &mut Vec<HashError>,
 ) -> Vec<usize> {
-    let Some(first) = leader_indexes.first().copied() else {
+    let Some(first) = cluster_indexes.first().copied() else {
         return Vec::new();
     };
-    let baseline = &files[clusters[leaders[first].cluster_index].leader].path;
+    let baseline = &files[clusters[first].leader].path;
     let mut kept = vec![first];
-    for index in leader_indexes.iter().copied().skip(1) {
-        let path = &files[clusters[leaders[index].cluster_index].leader].path;
+    for index in cluster_indexes.iter().copied().skip(1) {
+        let path = &files[clusters[index].leader].path;
         match files_identical(baseline, path) {
             Ok(true) => kept.push(index),
             Ok(false) => errors.push(HashError {
@@ -275,14 +472,13 @@ fn confirm_bytes(
 fn group_from(
     files: &[Candidate],
     clusters: &[Cluster],
-    leaders: &[HashedLeader],
-    leader_indexes: &[usize],
+    cluster_indexes: &[usize],
     logical_size: u64,
     full_hash: String,
 ) -> DuplicateGroup {
     let mut members = Vec::new();
-    for index in leader_indexes {
-        let cluster = &clusters[leaders[*index].cluster_index];
+    for index in cluster_indexes {
+        let cluster = &clusters[*index];
         for member_index in &cluster.members {
             let file = &files[*member_index];
             members.push(DuplicateMember {
@@ -297,7 +493,7 @@ fn group_from(
             .cmp(&right.path)
             .then(left.file_id.cmp(&right.file_id))
     });
-    let copies = u64::try_from(leader_indexes.len()).unwrap_or(u64::MAX);
+    let copies = u64::try_from(cluster_indexes.len()).unwrap_or(u64::MAX);
     DuplicateGroup {
         logical_size,
         full_hash,
@@ -665,5 +861,86 @@ mod tests {
         fs::write(&right, b"bbbb").unwrap();
         assert!(!files_identical(&left, &right).unwrap());
         assert!(files_identical(&left, &left).unwrap());
+    }
+
+    #[test]
+    fn hash_workers_stay_inside_the_cap() {
+        assert_eq!(HASH_CONCURRENCY, 4);
+        assert_eq!(hash_workers(0), 1);
+        assert_eq!(hash_workers(1), 1);
+        assert_eq!(hash_workers(4), 4);
+        assert_eq!(hash_workers(32), HASH_CONCURRENCY);
+    }
+
+    #[test]
+    fn one_worker_and_the_cap_produce_the_same_groups() {
+        let dir = TempDir::new();
+        let mut prefix = vec![7u8; SAMPLE_BYTES as usize];
+        let mut left = prefix.clone();
+        left.extend_from_slice(b"SAME-TAIL");
+        prefix.extend_from_slice(b"SAME-TAIL");
+        let mut other = vec![8u8; SAMPLE_BYTES as usize];
+        other.extend_from_slice(b"DIFF-TAIL");
+        let left_path = dir.path.join("left.bin");
+        let right_path = dir.path.join("right.bin");
+        let unique = dir.path.join("unique.bin");
+        fs::write(&left_path, &left).unwrap();
+        fs::write(&right_path, &prefix).unwrap();
+        fs::write(&unique, &other).unwrap();
+        let files = [
+            candidate(1, left_path, Some(1), Some(1)),
+            candidate(2, right_path, Some(2), Some(1)),
+            candidate(3, unique, Some(3), Some(1)),
+        ];
+        let single = find_duplicates_reporting(&files, true, 1, |_| {});
+        let parallel = find_duplicates_reporting(&files, true, 32, |_| {});
+        assert_eq!(single, parallel);
+        assert_eq!(parallel.groups.len(), 1);
+        let unique_hash = parallel
+            .hashes
+            .iter()
+            .find(|hash| hash.file_id == 3)
+            .unwrap();
+        assert!(unique_hash.full_hash.is_none());
+        assert_eq!(unique_hash.hashed_bytes, SAMPLE_BYTES);
+    }
+
+    #[test]
+    fn progress_counts_sample_reads_and_skips_a_unique_full_hash() {
+        let dir = TempDir::new();
+        let payload = vec![9u8; (SAMPLE_BYTES as usize) + 32];
+        let mut other = payload.clone();
+        other[0] = 1;
+        let left = dir.path.join("left.bin");
+        let right = dir.path.join("right.bin");
+        let unique = dir.path.join("unique.bin");
+        fs::write(&left, &payload).unwrap();
+        fs::write(&right, &payload).unwrap();
+        fs::write(&unique, &other).unwrap();
+        let mut samples = Vec::new();
+        let mut fulls = Vec::new();
+        let analysis = find_duplicates_reporting(
+            &[
+                candidate(1, left, Some(1), Some(1)),
+                candidate(2, right, Some(2), Some(1)),
+                candidate(3, unique, Some(3), Some(1)),
+            ],
+            false,
+            HASH_CONCURRENCY,
+            |progress| match progress.phase {
+                "sampling" => samples.push((progress.files_done, progress.files_total)),
+                "hashing" => fulls.push((progress.files_done, progress.files_total)),
+                "done" => {
+                    assert_eq!(progress.files_done, 3);
+                    assert_eq!(progress.files_total, 3);
+                }
+                other => panic!("unexpected phase {other}"),
+            },
+        );
+        assert_eq!(analysis.groups.len(), 1);
+        assert_eq!(samples.first().copied(), Some((0, 3)));
+        assert_eq!(samples.last().copied(), Some((3, 3)));
+        assert_eq!(fulls.first().copied(), Some((0, 2)));
+        assert_eq!(fulls.last().copied(), Some((2, 2)));
     }
 }
