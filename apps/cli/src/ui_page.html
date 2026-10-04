@@ -267,6 +267,43 @@
     .bar-track { height: 12px; border-radius: 999px; background: #f3efe6; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 999px; background: var(--teal); }
     .bar-fill.cleanup { background: #8a5a32; }
+    .storage-bar {
+      display: flex;
+      width: 100%;
+      height: 36px;
+      margin-top: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e7efe9;
+    }
+    .storage-bar button {
+      height: 36px;
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      flex: 1 0 0;
+    }
+    .storage-bar button[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: -2px; }
+    .storage-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .storage-legend button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+    .storage-files { margin-top: 8px; }
+    .storage-files .path-line { display: flex; gap: 8px; align-items: center; }
     @media (prefers-reduced-motion: reduce) {
       .progress-bar { animation: none; width: 100%; opacity: 0.85; }
     }
@@ -337,6 +374,7 @@
         </div>
         <p class="empty" id="overview-empty">No scan loaded yet. Scan this Mac, choose a folder, or pick one from history.</p>
         <div id="overview-body" class="hidden"></div>
+        <div id="storage-map" class="hidden"></div>
         <div id="home-chart" class="hidden"></div>
       </section>
 
@@ -563,6 +601,7 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         "mac-storage duplicates" + db,
         "mac-storage large-files --limit 20" + db,
         "mac-storage folders --depth 1" + db,
+        "mac-storage storage" + db,
         "mac-storage categories" + db,
         "mac-storage place --path FILE" + db,
         "mac-storage history" + db,
@@ -1256,6 +1295,128 @@ Type help, or scan a folder. A leading ~/ is your home directory.</pre>
         advice = null;
       }
       renderSpaceChart(state.folders, advice);
+      await loadStorage();
+    }
+
+    const STORAGE_COLORS = ["#0e5f5c", "#c4a35a", "#8a5a32", "#3d6b8a", "#6b4c7a", "#8a3d32", "#4d6b4a", "#5c5346", "#2f6f73", "#7a6248"];
+
+    function percentLabel(hundredths) {
+      const value = Number(hundredths) || 0;
+      const whole = Math.floor(value / 100);
+      const frac = String(value % 100).padStart(2, "0");
+      return whole + "." + frac + "%";
+    }
+
+    async function loadStorage(folder, category) {
+      if (state.scanId == null) return;
+      const params = ["scan=" + encodeURIComponent(state.scanId)];
+      if (folder) params.push("folder=" + encodeURIComponent(folder));
+      if (category) params.push("category=" + encodeURIComponent(category));
+      const report = await api("GET", "/api/storage?" + params.join("&"));
+      state.scanId = report.scan_id;
+      renderStorage(report);
+    }
+
+    function renderStorage(report) {
+      const host = $("storage-map");
+      host.replaceChildren();
+      const segments = report.segments || [];
+      if (!segments.length) {
+        host.classList.add("hidden");
+        return;
+      }
+      host.classList.remove("hidden");
+      host.append(el("h3", "chart-title", "Storage"));
+      host.append(el("p", "note", "Each slice is that folder's percent of the local files in this scan (" + bytes(report.total_local_bytes) + "). Click a slice to open it. These percents are not free space."));
+      const selected = report.drill ? report.drill.folder : "";
+      host.append(storageBar(segments, selected, (segment) => {
+        loadStorage(segment.path).catch((err) => setBanner(err.message, false));
+      }));
+      host.append(storageLegend(segments, selected, (segment) => {
+        loadStorage(segment.path).catch((err) => setBanner(err.message, false));
+      }));
+      if (!report.drill) return;
+      const drill = report.drill;
+      host.append(el("h3", "chart-title", drill.label));
+      host.append(el("p", "note", drill.label + " is " + percentLabel(shareOf(segments, drill.folder)) + " of this scan. The bar below is how that folder splits into categories. Nothing is moved until you confirm Trash."));
+      const selectedCategory = drill.category || "";
+      host.append(storageBar(drill.categories || [], selectedCategory, (segment) => {
+        loadStorage(drill.folder, segment.category || segment.label).catch((err) => setBanner(err.message, false));
+      }, true));
+      host.append(storageLegend(drill.categories || [], selectedCategory, (segment) => {
+        loadStorage(drill.folder, segment.category || segment.label).catch((err) => setBanner(err.message, false));
+      }, true));
+      if (!drill.category) {
+        host.append(el("p", "empty", "Choose a category to see the largest files and review them for cleanup."));
+        return;
+      }
+      host.append(el("p", "note", drill.hint || ""));
+      const files = drill.files || [];
+      if (!files.length) {
+        host.append(el("p", "empty", "No local files in this category."));
+        return;
+      }
+      const review = el("button", "primary", "Review these in Trash");
+      review.type = "button";
+      review.addEventListener("click", () => {
+        files.forEach((file) => addTrashPath(file.path, true));
+        showSection("trash");
+        setBanner("Added " + files.length + " path(s) to Trash review. Nothing was moved.", true);
+      });
+      host.append(review);
+      const list = el("div", "storage-files");
+      files.forEach((file) => {
+        const row = el("div", "path-line");
+        row.append(el("span", "path", file.path + " · " + bytes(file.logical_size)));
+        const add = el("button", "ghost", "Add");
+        add.type = "button";
+        add.addEventListener("click", () => {
+          addTrashPath(file.path, false);
+          setBanner("Added to Trash review. Nothing was moved.", true);
+        });
+        row.append(add);
+        list.append(row);
+      });
+      host.append(list);
+    }
+
+    function shareOf(segments, folder) {
+      const match = (segments || []).find((item) => item.path === folder);
+      return match ? match.percent_hundredths : 0;
+    }
+
+    function storageBar(segments, selected, onPick, byCategory) {
+      const bar = el("div", "storage-bar");
+      bar.setAttribute("role", "group");
+      bar.setAttribute("aria-label", byCategory ? "Categories in this folder" : "Storage by folder");
+      segments.forEach((segment, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        const key = byCategory ? (segment.category || segment.label) : segment.path;
+        button.setAttribute("aria-pressed", key === selected ? "true" : "false");
+        button.title = segment.label + " " + percentLabel(segment.percent_hundredths);
+        button.style.flexGrow = String(Number(segment.percent_hundredths) || 0);
+        button.style.background = STORAGE_COLORS[index % STORAGE_COLORS.length];
+        button.addEventListener("click", () => onPick(segment));
+        bar.append(button);
+      });
+      return bar;
+    }
+
+    function storageLegend(segments, selected, onPick, byCategory) {
+      const legend = el("div", "storage-legend");
+      segments.forEach((segment, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        const key = byCategory ? (segment.category || segment.label) : segment.path;
+        button.setAttribute("aria-pressed", key === selected ? "true" : "false");
+        const swatch = el("span", "swatch");
+        swatch.style.background = STORAGE_COLORS[index % STORAGE_COLORS.length];
+        button.append(swatch, document.createTextNode(segment.label + " " + percentLabel(segment.percent_hundredths)));
+        button.addEventListener("click", () => onPick(segment));
+        legend.append(button);
+      });
+      return legend;
     }
 
     $("scan-form").addEventListener("submit", async (event) => {

@@ -196,6 +196,12 @@ enum PageCommand {
         scan: Option<i64>,
         depth: u32,
     },
+    Storage {
+        scan: Option<i64>,
+        folder: Option<String>,
+        category: Option<String>,
+        limit: u64,
+    },
     History {
         limit: u64,
     },
@@ -353,6 +359,7 @@ fn dispatch(app: &App, method: &str, url: &str, host: Option<&str>, body: &[u8])
         ("GET", "/api/history") => history(app, &query),
         ("GET", "/api/large-files") => large_files(app, &query),
         ("GET", "/api/folders") => folders(app, &query),
+        ("GET", "/api/storage") => storage(app, &query),
         ("GET", "/api/analyze") => review(app, &query, false),
         ("GET", "/api/recommendations") => review(app, &query, true),
         ("GET", "/api/trends") => trends(app, &query),
@@ -550,6 +557,25 @@ fn save_snapshot(
 fn history(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
     let limit = query_u64(query, "limit", 20)?;
     to_json(&query::run_history(Some(&app.database), limit)?)
+}
+
+fn storage(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
+    let folder = query
+        .get("folder")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let category = query
+        .get("category")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let limit = query_u64(query, "limit", 40)?;
+    to_json(&crate::folders::run_storage(
+        Some(app.database.as_path()),
+        query_i64(query, "scan")?,
+        folder.as_deref(),
+        category.as_deref(),
+        limit,
+    )?)
 }
 
 fn folders(app: &App, query: &HashMap<String, String>) -> Result<Vec<u8>, Error> {
@@ -812,6 +838,25 @@ fn execute(app: &App, parsed: ParsedCommand) -> Result<CommandResult, Error> {
                 crate::folders::format_folders(&report),
             )
         }
+        PageCommand::Storage {
+            scan,
+            folder,
+            category,
+            limit,
+        } => {
+            let report = crate::folders::run_storage(
+                db,
+                scan,
+                folder.as_deref(),
+                category.as_deref(),
+                limit,
+            )?;
+            finish(
+                parsed.json,
+                &report,
+                crate::folders::format_storage(&report),
+            )
+        }
         PageCommand::History { limit } => {
             let report = query::run_history(db, limit)?;
             finish(parsed.json, &report, query::format_history(&report))
@@ -913,6 +958,7 @@ Mac Storage Advisor page commands (not a system shell):
   duplicates [--scan ID] [--verify] [--json]
   large-files [--scan ID] [--limit N] [--min-size SIZE] [--json]
   folders [--scan ID] [--depth N] [--json]
+  storage [--scan ID] [--folder NAME] [--category NAME] [--limit N] [--json]
   categories [--scan ID] [--category NAME] [--json]
   place --path PATH [--scan ID] [--confirm PHRASE] [--json]
   history [--limit N] [--json]
@@ -946,11 +992,13 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
     let mut scan = None;
     let mut verify = false;
     let mut limit = 20u64;
+    let mut limit_set = false;
     let mut older_than = 180u64;
     let mut depth = 1u32;
     let mut trash_paths = Vec::new();
     let mut confirm: Option<String> = None;
     let mut category: Option<String> = None;
+    let mut folder: Option<String> = None;
     let mut positionals = Vec::new();
     let mut index = 1;
     while index < words.len() {
@@ -1002,6 +1050,7 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
                 limit = raw
                     .parse::<u64>()
                     .map_err(|_| Error::Usage("--limit must be an integer".into()))?;
+                limit_set = true;
             }
             "--older-than" => {
                 let raw = take_value(&mut index)?;
@@ -1010,6 +1059,7 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
             "--path" => trash_paths.push(PathBuf::from(take_value(&mut index)?)),
             "--confirm" => confirm = Some(take_value(&mut index)?),
             "--category" => category = Some(take_value(&mut index)?),
+            "--folder" => folder = Some(take_value(&mut index)?),
             "--db"
             | "--threads"
             | "--verbose"
@@ -1034,9 +1084,14 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
             "--path and --confirm belong to trash or place".into(),
         ));
     }
-    if verb != "categories" && category.is_some() {
+    if verb != "categories" && verb != "storage" && category.is_some() {
         return Err(Error::Usage(
-            "--category belongs to the categories command".into(),
+            "--category belongs to categories or storage".into(),
+        ));
+    }
+    if verb != "storage" && folder.is_some() {
+        return Err(Error::Usage(
+            "--folder belongs to the storage command".into(),
         ));
     }
     let command = match verb {
@@ -1071,6 +1126,15 @@ fn parse_line(line: &str) -> Result<ParsedCommand, Error> {
         "folders" => {
             reject_positionals(verb, &positionals)?;
             PageCommand::Folders { scan, depth }
+        }
+        "storage" => {
+            reject_positionals(verb, &positionals)?;
+            PageCommand::Storage {
+                scan,
+                folder,
+                category,
+                limit: if limit_set { limit } else { 40 },
+            }
         }
         "history" => {
             reject_positionals(verb, &positionals)?;
@@ -1448,6 +1512,7 @@ mod tests {
         assert!(page.1.contains("data-section=\"place\""));
         assert!(page.1.contains("dup-progress"));
         assert!(page.1.contains("move file"));
+        assert!(page.1.contains("storage-map"));
         assert!(!page.1.contains("<script src="));
 
         let denied = http_host(addr, "GET", "/api/status", "evil.example", "");
@@ -1590,6 +1655,35 @@ mod tests {
         assert_eq!(moved_json["moved"], true);
         assert!(!incoming.exists());
         assert_eq!(std::fs::read(root.join("note.txt")).unwrap(), b"placed");
+
+        let storage = http(addr, "GET", &format!("/api/storage?scan={scan_id}"), "");
+        assert_eq!(storage.0, 200, "{}", storage.1);
+        let storage_json: serde_json::Value = serde_json::from_str(&storage.1).unwrap();
+        let segments = storage_json["segments"].as_array().unwrap();
+        assert!(!segments.is_empty());
+        let hundredths: u64 = segments
+            .iter()
+            .map(|item| item["percent_hundredths"].as_u64().unwrap())
+            .sum();
+        assert_eq!(hundredths, 10_000);
+        assert!(storage_json.get("drill").is_none() || storage_json["drill"].is_null());
+        let folder = segments[0]["path"].as_str().unwrap();
+        let drilled = http(
+            addr,
+            "GET",
+            &format!("/api/storage?scan={scan_id}&folder={folder}&category=documents"),
+            "",
+        );
+        assert_eq!(drilled.0, 200, "{}", drilled.1);
+        let drilled_json: serde_json::Value = serde_json::from_str(&drilled.1).unwrap();
+        assert!(drilled_json["drill"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing is moved"));
+        assert!(!drilled_json["drill"]["files"]
+            .as_array()
+            .unwrap()
+            .is_empty());
 
         let large = http(
             addr,

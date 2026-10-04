@@ -86,6 +86,8 @@ enum Command {
     LargeFiles(query::LargeArgs),
     /// Group stored regular files into folder totals. Does not read file contents.
     Folders(folders::FolderArgs),
+    /// Show each top-level folder's share of the scan. Does not move files.
+    Storage(folders::StorageArgs),
     /// Group stored files by kind. This is a view; nothing is moved or renamed.
     Categories(organize::CategoryArgs),
     /// Suggest a file name and folder. Moves the file only after `--confirm "move file"`.
@@ -186,6 +188,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Duplicates(args) => query::duplicates_command(args),
         Command::LargeFiles(args) => query::large_files_command(args),
         Command::Folders(args) => folders::folders_command(args),
+        Command::Storage(args) => folders::storage_command(args),
         Command::Categories(args) => organize::categories_command(args),
         Command::Place(args) => organize::place_command(args),
         Command::History(args) => query::history_command(args),

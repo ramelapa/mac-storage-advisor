@@ -96,6 +96,8 @@ mac-storage duplicates
 mac-storage duplicates --verify --json
 mac-storage large-files --limit 20
 mac-storage folders --depth 1
+mac-storage storage
+mac-storage storage --folder Documents --category installers
 mac-storage categories
 mac-storage categories --category documents
 mac-storage place --path ~/Downloads/Invoice\ \(1\).pdf
@@ -133,7 +135,7 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 ```json
 {
   "product": "Mac Storage Advisor",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "scan_id": 1,
   "root": "/path/to/fixture",
   "directories_scanned": 2,
@@ -171,6 +173,8 @@ Human output includes directories scanned, files scanned, logical bytes, errors,
 
 `categories` is a view of stored files. `categories --category documents` adds the file list for that category. `place` prints a suggested name and folder and leaves the file where it is. `place --confirm "move file"` renames it to that suggestion. Any other confirmation leaves it in place. The move does not overwrite a file that is already there, and it does not delete anything.
 
+`storage` prints each top-level folder's percent of the local files in the scan. Those percents add up to 100. `storage --folder Documents` shows how that folder splits into categories. `storage --folder Documents --category installers` lists the largest local files in that category for review. It does not move them. iCloud placeholder bytes are not part of the percent.
+
 `analyze` skips build directories and `~$` Office lock files when it counts stale files. Duplicate groups that sit entirely inside those directories are reported as package metadata, not as extra documents. iCloud placeholders are left out of the stale and Downloads tallies, and Trash will not move them. `trends` only subtracts two scans of the same root.
 
 ## Development
@@ -185,7 +189,7 @@ Tests use temporary fixtures only. See [docs/development.md](docs/development.md
 
 ## Project status
 
-v0.10 is the current release. It can scan your home folder with progress on screen, show which top-level folders hold the space, find identical files while showing hash progress, group stored files into categories, suggest a name and folder for a file you just saved, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page, in a native window, or in Mac Storage Advisor.app. A long duplicate list can be filtered and paged instead of scrolled as one block. Feature status is authoritative in [docs/features.md](docs/features.md). The folder walk stays one thread. Duplicate hashing uses at most four workers.
+v0.11 is the current release. It can scan your home folder with progress on screen, show each top-level folder as a percent of that scan, open a folder and then a category to review the largest files, find identical files while showing hash progress, group stored files into categories, suggest a name and folder for a file you just saved, suggest what to review, compare the same folder over time, move a confirmed path to Trash, check the local database, and show those results on a localhost page, in a native window, or in Mac Storage Advisor.app. A long duplicate list can be filtered and paged instead of scrolled as one block. Feature status is authoritative in [docs/features.md](docs/features.md). The folder walk stays one thread. Duplicate hashing uses at most four workers. The storage bar does not move files.
 
 ## Limitations
 

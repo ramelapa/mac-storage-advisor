@@ -1,6 +1,6 @@
 # Roadmap
 
-v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window. v0.7 groups stored files into folder totals. v0.8 packages that window as a Mac app. v0.8.1 makes a long duplicate list easier to review. v0.9 shows a home-folder scan in progress and where that space sits. v0.10 speeds duplicate hashing, groups files into categories, and suggests where a new file could go.
+v0.1 is the scan foundation. v0.2 adds duplicate grouping, large files, and history. v0.3 adds review suggestions. v0.4 adds a localhost page. v0.5 adds placeholder and extent notes, plus a confirmed move to Trash. v0.6 checks the database and opens that page in a window. v0.7 groups stored files into folder totals. v0.8 packages that window as a Mac app. v0.8.1 makes a long duplicate list easier to review. v0.9 shows a home-folder scan in progress and where that space sits. v0.10 speeds duplicate hashing, groups files into categories, and suggests where a new file could go. v0.11 shows folder percents in a storage bar and drills into a category for review.
 
 ## v0.1 — Foundation (this version)
 
@@ -96,6 +96,14 @@ Done:
 - Duplicate hashing uses at most four workers. Results match a one-worker pass. A unique 64 KiB sample is not fully hashed. The duplicate page shows progress while that pass runs
 - `categories` groups the stored scan into documents, images, media, archives, installers, developer artifacts, and other. Opening a category lists files and does not move them
 - `place --path FILE` suggests a name and folder. The file moves only when `--confirm` is exactly `move file`
+
+### v0.11
+
+Done:
+
+- `mac-storage storage` shows each top-level folder as a percent of the local files in the scan. The shares add up to 100%
+- Opening a folder shows how that folder splits into categories. Opening a category lists the largest local files
+- Those files can be added to Trash review. The storage view itself does not move them
 
 ## Future / Deferred
 

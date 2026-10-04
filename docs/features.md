@@ -2,7 +2,7 @@
 
 Status values: Planned, In Progress, Done, Deferred, Experimental.
 
-Only rows with automated tests are Done. v0.10.0 hashes duplicate candidates with a cap of four workers, shows that progress, groups stored files into categories, and suggests a name and folder that moves only after the phrase `move file`. The folder walk stays one thread.
+Only rows with automated tests are Done. v0.11.0 shows each top-level folder as a percent of the scan, like the macOS storage bar, and opens a category inside that folder for review. Nothing is moved until Trash is confirmed. The folder walk stays one thread.
 
 | ID | Feature | Status | Release | Description |
 | --- | --- | --- | --- | --- |
@@ -49,3 +49,4 @@ Only rows with automated tests are Done. v0.10.0 hashes duplicate candidates wit
 | F-041 | Mac overview | Done | 0.9.0 | Scan this Mac walks the home folder and updates file and byte counts while the walk runs. The overview chart compares top-level folders and points at unchanged files, developer folders, Library, and Downloads. Those hints are not free space, and the chart does not move files. |
 | F-042 | File categories | Done | 0.10.0 | `mac-storage categories` groups stored regular files into documents, images, media, archives, installers, developer artifacts, and other. A category lists those paths. Files inside a developer-artifact directory stay in developer. iCloud placeholder bytes are omitted from the category size. Nothing is moved or renamed. |
 | F-043 | Suggested place | Done | 0.10.0 | `mac-storage place --path FILE` suggests a file name and folder from the name, the extension, and where other files of that extension already live. The suggestion skips developer-artifact trees, iCloud placeholders, and protected macOS paths. The file moves only when `--confirm` is exactly `move file`. An existing destination, a symlink, a directory, and a protected path are refused. Nothing is permanently deleted. |
+| F-044 | Storage bar | Done | 0.11.0 | `mac-storage storage` shows each top-level folder as a percent of the local files in the scan. The shares add up to 100%. iCloud placeholder bytes are not part of the percent. `--folder` opens that folder's categories, and `--category` lists the largest local files to review. Nothing is moved. |

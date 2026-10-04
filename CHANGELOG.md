@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Duplicate hashing uses at most four workers. The size, sample, then full-hash order is unchanged, and a unique sample is still not fully hashed. One worker and four workers produce the same groups. The folder walk stays one thread. The duplicate page shows how many files have been sampled or fully hashed.
 - `mac-storage categories` groups stored files into documents, images, media, archives, installers, developer artifacts, and other. Opening a category lists the files. Nothing is moved or renamed. iCloud placeholder bytes stay out of the category size.
 - `mac-storage place --path FILE` suggests a name and folder from the file name, its extension, and where similar files already live. The file is renamed only when `--confirm` is exactly `move file`. A wrong phrase, an existing destination, a symlink, and a protected path leave the file where it is. Nothing is permanently deleted.
+- `mac-storage storage` draws each top-level folder as a percent of the local files in the scan. The percents add up to 100. Opening a folder shows its categories, and opening a category lists the largest files to review for Trash. iCloud placeholders are not part of the percent. Nothing is moved.
 
 ### Not in this version
 

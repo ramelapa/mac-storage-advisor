@@ -726,6 +726,184 @@ fn signed_delta(newest: u64, previous: u64) -> i64 {
     newest.saturating_sub(previous)
 }
 
+/// One slice of a storage bar. `percent_hundredths` is a share of the local
+/// bytes in that bar: 10000 is 100%. The shares in one bar add up to 10000
+/// when the total is not zero. They are not free space.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StorageSegment {
+    pub label: String,
+    pub path: PathBuf,
+    pub category: Option<String>,
+    pub logical_bytes: u64,
+    pub file_count: u64,
+    pub percent_hundredths: u32,
+}
+
+/// A stored file shown while reviewing one category. Nothing has been moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CleanupCandidate {
+    pub path: PathBuf,
+    pub logical_size: u64,
+    pub category: String,
+    pub extension: Option<String>,
+}
+
+/// Turn byte amounts into shares of 100.00% (10000 hundredths).
+///
+/// The largest remainders get the leftover hundredths. Ties go to the earlier
+/// amount, so the same inputs always produce the same shares.
+pub fn percent_hundredths(amounts: &[u64]) -> Vec<u32> {
+    let total: u64 = amounts
+        .iter()
+        .fold(0, |sum, amount| sum.saturating_add(*amount));
+    if total == 0 {
+        return vec![0; amounts.len()];
+    }
+    let total = u128::from(total);
+    let mut shares = Vec::with_capacity(amounts.len());
+    let mut remainders = Vec::with_capacity(amounts.len());
+    let mut assigned = 0u32;
+    for (index, amount) in amounts.iter().enumerate() {
+        let product = u128::from(*amount) * 10_000;
+        let share = u32::try_from(product / total).unwrap_or(u32::MAX);
+        assigned = assigned.saturating_add(share);
+        shares.push(share);
+        remainders.push((product % total, index));
+    }
+    remainders.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    let mut leftover = 10_000u32.saturating_sub(assigned);
+    let mut cursor = 0;
+    while leftover > 0 && !remainders.is_empty() {
+        let index = remainders[cursor % remainders.len()].1;
+        shares[index] = shares[index].saturating_add(1);
+        leftover -= 1;
+        cursor += 1;
+    }
+    shares
+}
+
+/// Top-level folders as shares of the local bytes in the scan.
+///
+/// Placeholder bytes are left out. A folder with no local bytes is omitted.
+/// Files that sit directly in the scan root use the label `In this folder`.
+pub fn folder_shares(root: &Path, folders: &[FolderTotal]) -> Vec<StorageSegment> {
+    let visible: Vec<&FolderTotal> = folders
+        .iter()
+        .filter(|folder| folder.logical_bytes > 0)
+        .collect();
+    let percents = percent_hundredths(
+        &visible
+            .iter()
+            .map(|folder| folder.logical_bytes)
+            .collect::<Vec<_>>(),
+    );
+    visible
+        .into_iter()
+        .zip(percents)
+        .map(|(folder, percent_hundredths)| StorageSegment {
+            label: if folder.path == root {
+                "In this folder".to_owned()
+            } else {
+                folder
+                    .path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("folder")
+                    .to_owned()
+            },
+            path: folder.path.clone(),
+            category: None,
+            logical_bytes: folder.logical_bytes,
+            file_count: folder.local_files,
+            percent_hundredths,
+        })
+        .collect()
+}
+
+/// Categories as shares of the local bytes in `files`.
+///
+/// Empty categories are omitted. Order follows [`CATEGORY_ORDER`].
+pub fn category_shares(folder: &Path, files: &[InventoryFile]) -> Vec<StorageSegment> {
+    let summaries = categorize_files(files);
+    let visible: Vec<_> = summaries
+        .iter()
+        .filter(|category| category.logical_bytes > 0)
+        .collect();
+    let percents = percent_hundredths(
+        &visible
+            .iter()
+            .map(|category| category.logical_bytes)
+            .collect::<Vec<_>>(),
+    );
+    visible
+        .into_iter()
+        .zip(percents)
+        .map(|(category, percent_hundredths)| StorageSegment {
+            label: category.name.to_owned(),
+            path: folder.to_path_buf(),
+            category: Some(category.name.to_owned()),
+            logical_bytes: category.logical_bytes,
+            file_count: category.file_count.saturating_sub(category.dataless_files),
+            percent_hundredths,
+        })
+        .collect()
+}
+
+/// Stored files whose depth-1 folder is `folder`.
+pub fn files_under_folder(
+    root: &Path,
+    folder: &Path,
+    files: &[InventoryFile],
+) -> Vec<InventoryFile> {
+    files
+        .iter()
+        .filter(|file| folder_bucket(root, &file.path, 1).as_deref() == Some(folder))
+        .cloned()
+        .collect()
+}
+
+/// Largest local files to review. Placeholders are omitted. Nothing is moved.
+pub fn cleanup_candidates(
+    files: &[InventoryFile],
+    category: Option<&str>,
+    limit: usize,
+) -> Vec<CleanupCandidate> {
+    let mut rows: Vec<CleanupCandidate> = files
+        .iter()
+        .filter(|file| !file.is_dataless)
+        .filter(|file| {
+            category.is_none_or(|name| file_category(&file.path, file.extension.as_deref()) == name)
+        })
+        .map(|file| CleanupCandidate {
+            category: file_category(&file.path, file.extension.as_deref()).to_owned(),
+            extension: file.extension.clone(),
+            logical_size: file.logical_size,
+            path: file.path.clone(),
+        })
+        .collect();
+    rows.sort_by(|left, right| {
+        right
+            .logical_size
+            .cmp(&left.logical_size)
+            .then(left.path.cmp(&right.path))
+    });
+    rows.truncate(limit);
+    rows
+}
+
+/// What to tell a person before they review a category. This does not move files.
+pub fn cleanup_hint(category: &str) -> &'static str {
+    match category {
+        "documents" => "Large documents are listed for review. Add any you no longer need to Trash, then confirm. Nothing is moved from this list.",
+        "images" => "Images are listed largest first. Add the ones you do not want, then confirm Trash. Nothing is moved from this list.",
+        "media" => "Video and audio are often the largest files. Review them, then confirm Trash yourself. Nothing is moved from this list.",
+        "archives" => "Archives can be unpacked copies. Review them before Trash. Nothing is moved from this list.",
+        "installers" => "Installer images are often safe to remove after the app is installed. Confirm Trash yourself. Nothing is moved from this list.",
+        "developer" => "Developer folders can be recreated by a build. Review the path, then confirm Trash if you want it gone. Nothing is moved from this list.",
+        _ => "These files did not match a clearer category. Review the paths before Trash. Nothing is moved from this list.",
+    }
+}
+
 /// Stable category order for a stored scan. This is a view. Nothing is moved.
 pub const CATEGORY_ORDER: [&str; 7] = [
     "documents",
@@ -1411,5 +1589,58 @@ mod tests {
             ignored.suggested_directory,
             PathBuf::from("/tmp/scan/Desktop")
         );
+    }
+
+    #[test]
+    fn storage_shares_sum_to_the_whole_bar_and_skip_placeholders() {
+        let shares = percent_hundredths(&[1, 1, 1]);
+        assert_eq!(shares, vec![3334, 3333, 3333]);
+        assert_eq!(shares.iter().sum::<u32>(), 10_000);
+        assert_eq!(percent_hundredths(&[0, 0]), vec![0, 0]);
+        assert_eq!(percent_hundredths(&[5, 0, 5]), vec![5000, 0, 5000]);
+
+        let root = Path::new("/tmp/scan");
+        let mut cloud = file("/tmp/scan/Cloud/only.pdf", 9_000, None, Some("pdf"));
+        cloud.is_dataless = true;
+        let files = vec![
+            file("/tmp/scan/Documents/a.pdf", 60, None, Some("pdf")),
+            file("/tmp/scan/Documents/b.pdf", 40, None, Some("pdf")),
+            file("/tmp/scan/Downloads/app.dmg", 100, None, Some("dmg")),
+            file("/tmp/scan/notes.txt", 10, None, Some("txt")),
+            cloud,
+        ];
+        let folders = folder_totals(root, &files, 1);
+        let bar = folder_shares(root, &folders);
+        assert_eq!(
+            bar.iter().map(|item| item.percent_hundredths).sum::<u32>(),
+            10_000
+        );
+        assert!(bar.iter().all(|item| item.logical_bytes > 0));
+        assert!(bar.iter().all(|item| item.label != "Cloud"));
+        let documents = bar.iter().find(|item| item.label == "Documents").unwrap();
+        assert_eq!(documents.logical_bytes, 100);
+        assert_eq!(documents.percent_hundredths, 4762);
+        let downloads = bar.iter().find(|item| item.label == "Downloads").unwrap();
+        assert_eq!(downloads.percent_hundredths, 4762);
+        let here = bar
+            .iter()
+            .find(|item| item.label == "In this folder")
+            .unwrap();
+        assert_eq!(here.percent_hundredths, 476);
+
+        let inside = files_under_folder(root, Path::new("/tmp/scan/Documents"), &files);
+        assert_eq!(inside.len(), 2);
+        let categories = category_shares(Path::new("/tmp/scan/Documents"), &inside);
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0].category.as_deref(), Some("documents"));
+        assert_eq!(categories[0].percent_hundredths, 10_000);
+
+        let review = cleanup_candidates(&inside, Some("documents"), 10);
+        assert_eq!(review.len(), 2);
+        assert!(review[0].path.ends_with("a.pdf"));
+        assert!(cleanup_candidates(&files, Some("documents"), 10)
+            .iter()
+            .all(|file| !file.path.ends_with("only.pdf")));
+        assert!(cleanup_hint("installers").contains("Nothing is moved"));
     }
 }
